@@ -1,6 +1,6 @@
 import { GoogleGenAI } from '@google/genai'
 import { EXPERIENCE_LABEL, ITEM_LABEL, SCENE_LABEL, WEAR_LABEL } from './data/labels.js'
-import type { Conditions, FitResult, Product } from './types.js'
+import { ITEMS, MOBILITY, SCENES, type Conditions, type FitResult, type ItemId, type Mobility, type Product, type Scene } from './types.js'
 
 export type Explanation = {
   matches: string[]
@@ -109,6 +109,96 @@ function fallbackQuestions(conditions: Conditions, fit: FitResult) {
     questions.push(`제 키에서 ${WEAR_LABEL[conditions.wearStyle]} 스트랩 길이가 맞는지 보고 싶어요.`)
   }
   return questions.slice(0, 3)
+}
+
+export type ParsedConditions = {
+  scene: Scene | null
+  mobility: Mobility | null
+  items: ItemId[]
+  destination: string | null
+  rewearScene: Scene | null
+  confidence: number
+  unparsed: string[]
+}
+
+const EMPTY_PARSE: ParsedConditions = {
+  scene: null,
+  mobility: null,
+  items: [],
+  destination: null,
+  rewearScene: null,
+  confidence: 0,
+  unparsed: [],
+}
+
+/**
+ * 사용자가 목적지·상황을 문장으로 적으면 장면·이동량·소지품으로 구조화한다.
+ * 없는 enum으로 추측해 채우지 않는다. 확신이 낮으면 null과 unparsed로 돌려 사용자가 직접 고르게 한다.
+ * API 키가 없으면 파싱할 수 없다는 안내만 돌려준다. (문장을 다듬는 explain과 달리 규칙 엔진 대체재가 없음)
+ */
+export async function parseConditions(text: string): Promise<ParsedConditions> {
+  const apiKey = process.env.GEMINI_API_KEY
+  if (!apiKey) {
+    return { ...EMPTY_PARSE, unparsed: ['AI 키가 설정되지 않아 문장을 분석할 수 없습니다.'] }
+  }
+
+  try {
+    const ai = new GoogleGenAI({ apiKey })
+    const response = await ai.models.generateContent({
+      model: MODEL,
+      contents: text,
+      config: {
+        systemInstruction: PARSE_SYSTEM,
+        responseMimeType: 'application/json',
+        responseJsonSchema: PARSE_SCHEMA,
+      },
+    })
+    if (!response.text) return EMPTY_PARSE
+    const parsed = JSON.parse(response.text) as ParsedConditions
+    return sanitizeParsed(parsed)
+  } catch {
+    return { ...EMPTY_PARSE, unparsed: ['문장을 분석하는 중 오류가 발생했습니다.'] }
+  }
+}
+
+const PARSE_SYSTEM = `너는 MCM SCENE FIT의 조건 파싱 담당이다. 사용자가 자유롭게 쓴 문장에서 아래 항목만 뽑아라.
+
+- scene: ${SCENES.join(', ')} 중 하나. 문장에 명확한 근거가 없으면 null.
+- mobility: ${MOBILITY.join(', ')} 중 하나. 근거가 없으면 null.
+- items: ${ITEMS.join(', ')} 중에서 문장에 실제로 언급된 것만. 목록에 없는 물건은 items에 넣지 말고 unparsed에 "{물건}은 소지품 목록에 없어 반영하지 않음" 형태로 적어라.
+- destination: 장소·시기를 합친 짧은 문자열. 없으면 null.
+- rewearScene: ${SCENES.join(', ')} 중 하나. "그 다음에도", "평소에도" 같은 재사용 의도가 있을 때만. 없으면 null.
+- confidence: 0~1 사이 숫자. 문장이 애매하면 낮게.
+- unparsed: 반영하지 못한 내용을 한국어 문장으로.
+
+없는 enum 값을 지어내지 마라. 확신이 없으면 null로 두고 unparsed에 이유를 적어라.`
+
+const PARSE_SCHEMA = {
+  type: 'object',
+  properties: {
+    scene: { type: ['string', 'null'], enum: [...SCENES, null] },
+    mobility: { type: ['string', 'null'], enum: [...MOBILITY, null] },
+    items: { type: 'array', items: { type: 'string', enum: ITEMS } },
+    destination: { type: ['string', 'null'] },
+    rewearScene: { type: ['string', 'null'], enum: [...SCENES, null] },
+    confidence: { type: 'number' },
+    unparsed: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['scene', 'mobility', 'items', 'destination', 'rewearScene', 'confidence', 'unparsed'],
+  additionalProperties: false,
+} as const
+
+/** AI 응답을 그대로 믿지 않는다. enum을 벗어난 값은 null·제외로 되돌린다. */
+function sanitizeParsed(parsed: ParsedConditions): ParsedConditions {
+  return {
+    scene: SCENES.includes(parsed.scene as Scene) ? parsed.scene : null,
+    mobility: MOBILITY.includes(parsed.mobility as Mobility) ? parsed.mobility : null,
+    items: Array.isArray(parsed.items) ? parsed.items.filter((item) => ITEMS.includes(item)) : [],
+    destination: typeof parsed.destination === 'string' && parsed.destination ? parsed.destination : null,
+    rewearScene: SCENES.includes(parsed.rewearScene as Scene) ? parsed.rewearScene : null,
+    confidence: typeof parsed.confidence === 'number' ? Math.max(0, Math.min(1, parsed.confidence)) : 0,
+    unparsed: Array.isArray(parsed.unparsed) ? parsed.unparsed.slice(0, 5) : [],
+  }
 }
 
 export { EXPERIENCE_LABEL }

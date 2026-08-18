@@ -91,7 +91,15 @@ async function run() {
   const 추천 = (await (await post('/v1/recommend', 여행조건)).json()) as any
   assert.ok(추천.data.candidates.length <= 3, '추천이 3개를 넘었다')
 
-  console.log('통과: 12개 검사 모두 성공')
+  // 13. AI 키 없이도 자연어 파싱 요청은 200이고, 값은 비어 있으며 이유가 남는다.
+  const 파싱 = (await (await post('/v1/ai/parse-conditions', { text: '10월 도쿄 여행, 카메라 들고 오래 걸을 예정' })).json()) as any
+  assert.equal(파싱.data.scene, null, 'AI 키 없이도 scene이 채워졌다')
+  assert.ok(파싱.data.unparsed.length > 0, 'AI 키가 없다는 안내가 없다')
+
+  // 14. 빈 문장은 400.
+  assert.equal((await post('/v1/ai/parse-conditions', { text: '' })).status, 400)
+
+  console.log('통과: 14개 검사 모두 성공')
 }
 
 run().catch((error) => {

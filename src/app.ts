@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
-import { explain } from './ai.js'
+import { explain, parseConditions as parseConditionsWithAI } from './ai.js'
 import { CARRY_ITEMS } from './data/items.js'
 import { STORES } from './data/labels.js'
 import { PRODUCTS, getProduct } from './data/products.js'
@@ -170,6 +170,13 @@ app.post('/v1/ai/explain', async (c) => {
   // fit을 보내면 그 판정을 사실로 취급하고, 없으면 서버가 직접 돌린다.
   const fit = body.fit ?? runFitCheck(product, parsed.conditions)
   return c.json({ data: await explain(product, parsed.conditions, fit) })
+})
+
+app.post('/v1/ai/parse-conditions', async (c) => {
+  const body = await safeJson(c)
+  const text = typeof body.text === 'string' ? body.text.trim() : ''
+  if (!text) return fail('VALIDATION_ERROR', '분석할 문장을 보내 주세요.', 400)
+  return c.json({ data: await parseConditionsWithAI(text) })
 })
 
 // ---------------------------------------------------------------- Store Fit Pass

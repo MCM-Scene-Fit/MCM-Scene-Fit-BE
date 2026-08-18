@@ -87,6 +87,7 @@ Base URL `/v1` · JSON · 비회원 세션(`X-Session-Id`, 24시간)
 | `POST` | `/fit-check/compare` | 선택 제품 vs 대안 |
 | `POST` | `/recommend` | 조건 기반 후보 3개 (P1) |
 | `POST` | `/ai/explain` | 판정 결과 → 문장 |
+| `POST` | `/ai/parse-conditions` | 자연어 문장 → 조건 (P1) |
 | `POST` | `/fit-passes` | 매장 체험 요청 접수 |
 | `GET` | `/fit-passes/{id}` | 신청 내역 조회 |
 
