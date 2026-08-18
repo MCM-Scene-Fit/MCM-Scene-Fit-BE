@@ -5,7 +5,7 @@ MCM 가방이 내 상황에 맞는지 확인해 주는 서비스의 API 서버�
 화면은 [MCM-Scene-Fit-FE](https://github.com/MCM-Scene-Fit/MCM-Scene-Fit-FE)가 맡고, 이 서버는 **판정과 저장**을 맡습니다.
 API 명세는 프론트 레포의 [`Scene-Fit/docs/API.md`](https://github.com/MCM-Scene-Fit/MCM-Scene-Fit-FE/blob/develop/Scene-Fit/docs/API.md)를 따릅니다.
 
-> 현재: P0 엔드포인트 13개 구현 완료 · Supabase 연결 완료 · 배포 전 (2026-08-18)
+> 현재: P0·P1 엔드포인트 구현 완료 · Supabase 연결 완료 · 배포 완료
 
 ---
 
@@ -90,6 +90,10 @@ Base URL `/v1` · JSON · 비회원 세션(`X-Session-Id`, 24시간)
 | `POST` | `/ai/parse-conditions` | 자연어 문장 → 조건 (P1) |
 | `POST` | `/fit-passes` | 매장 체험 요청 접수 |
 | `GET` | `/fit-passes/{id}` | 신청 내역 조회 |
+| `GET` | `/weather` | 목적지·시기 참고 날씨 (P1) |
+| `POST` | `/uploads` | 전신 사진 임시 업로드, TTL 1시간 (P1) |
+| `GET` | `/uploads/{id}/content` | 업로드한 이미지 내려받기 |
+| `DELETE` | `/uploads/{id}` | 업로드 즉시 삭제 |
 
 실시간 재고 조회, 예약·결제, 생성형 착용 이미지는 제공하지 않습니다.
 
@@ -140,8 +144,10 @@ npm test
 - Fit Pass 응답에 재고 확정 필드가 없는가
 - 조건 미충족 `409`, enum 불일치 `400`을 반환하는가
 - 세션·Fit Pass 저장과 조회가 동작하는가
+- 공식 정보 없이 날씨로 소재 판단을 허용하지 않는가
+- 업로드가 허용 형식·용량을 넘으면 거절하고, 삭제 후에는 조회되지 않는가
 
-검사는 항상 메모리 모드로 돌아가 실제 DB를 건드리지 않습니다.
+검사는 항상 메모리 모드로 돌아가 실제 DB를 건드리지 않습니다. (검사 19개)
 
 ---
 

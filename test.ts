@@ -99,7 +99,36 @@ async function run() {
   // 14. 빈 문장은 400.
   assert.equal((await post('/v1/ai/parse-conditions', { text: '' })).status, 400)
 
-  console.log('통과: 14개 검사 모두 성공')
+  // 15. 날씨: 파라미터 있으면 200, usableForMaterialJudgement는 항상 false.
+  const 날씨 = (await (await json('/v1/weather?destination=도쿄&period=2026-10')).json()) as any
+  assert.equal(날씨.data.usableForMaterialJudgement, false, '공식 정보 없이 날씨 판단을 허용했다')
+  assert.ok(날씨.data.summary.length > 0, '날씨 요약이 비었다')
+
+  // 16. 날씨: 파라미터 없으면 400.
+  assert.equal((await json('/v1/weather')).status, 400)
+
+  // 17. 업로드: jpeg 파일을 넣으면 201이고, 내려받으면 원본과 같다.
+  const jpegBytes = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0, 0xff, 0xd9])
+  const form = new FormData()
+  form.append('file', new File([jpegBytes], 'test.jpg', { type: 'image/jpeg' }))
+  const 업로드 = (await (await json('/v1/uploads', { method: 'POST', body: form })).json()) as any
+  assert.ok(업로드.data.uploadId.startsWith('upl_'), '업로드 id 형식이 다르다')
+  const 다운로드 = await json(new URL(업로드.data.url).pathname)
+  assert.equal(다운로드.headers.get('content-type'), 'image/jpeg')
+  const 받은바이트 = new Uint8Array(await 다운로드.arrayBuffer())
+  assert.deepEqual(받은바이트, jpegBytes, '다운로드한 이미지가 원본과 다르다')
+
+  // 18. 업로드: 삭제하면 204, 삭제 후 재조회는 404.
+  assert.equal((await json(`/v1/uploads/${업로드.data.uploadId}`, { method: 'DELETE' })).status, 204)
+  assert.equal((await json(new URL(업로드.data.url).pathname)).status, 404)
+
+  // 19. 업로드: 허용 안 된 형식은 415, 파일 없으면 400.
+  const 잘못된형식 = new FormData()
+  잘못된형식.append('file', new File([jpegBytes], 'test.txt', { type: 'text/plain' }))
+  assert.equal((await json('/v1/uploads', { method: 'POST', body: 잘못된형식 })).status, 415)
+  assert.equal((await json('/v1/uploads', { method: 'POST', body: new FormData() })).status, 400)
+
+  console.log('통과: 19개 검사 모두 성공')
 }
 
 run().catch((error) => {

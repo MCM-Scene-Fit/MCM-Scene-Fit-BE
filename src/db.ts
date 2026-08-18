@@ -22,31 +22,35 @@ const sql = url
     })
   : null
 
+type Table = 'sessions' | 'fit_passes' | 'uploads'
 type Row = { data: unknown; expiresAt?: Date }
 
 const memory = new Map<string, Row>()
 
 export const isPersistent = Boolean(sql)
 
-export async function put(table: 'sessions' | 'fit_passes', id: string, data: unknown, expiresAt?: Date) {
+/** sessions·uploads는 TTL이 있다. fit_passes는 없다. */
+const HAS_TTL: Record<Table, boolean> = { sessions: true, fit_passes: false, uploads: true }
+
+export async function put(table: Table, id: string, data: unknown, expiresAt?: Date) {
   if (!sql) {
     memory.set(`${table}:${id}`, { data, expiresAt })
     return
   }
-  if (table === 'sessions') {
+  if (HAS_TTL[table]) {
     await sql`
-      insert into sessions (id, data, expires_at) values (${id}, ${sql.json(data as never)}, ${expiresAt!})
+      insert into ${sql(table)} (id, data, expires_at) values (${id}, ${sql.json(data as never)}, ${expiresAt!})
       on conflict (id) do update set data = excluded.data, expires_at = excluded.expires_at
     `
   } else {
     await sql`
-      insert into fit_passes (id, data) values (${id}, ${sql.json(data as never)})
+      insert into ${sql(table)} (id, data) values (${id}, ${sql.json(data as never)})
       on conflict (id) do update set data = excluded.data
     `
   }
 }
 
-export async function get<T>(table: 'sessions' | 'fit_passes', id: string): Promise<T | null> {
+export async function get<T>(table: Table, id: string): Promise<T | null> {
   if (!sql) {
     const row = memory.get(`${table}:${id}`)
     if (!row) return null
@@ -56,23 +60,21 @@ export async function get<T>(table: 'sessions' | 'fit_passes', id: string): Prom
     }
     return row.data as T
   }
-  const rows =
-    table === 'sessions'
-      ? await sql`select data from sessions where id = ${id} and expires_at > now()`
-      : await sql`select data from fit_passes where id = ${id}`
+  const rows = HAS_TTL[table]
+    ? await sql`select data from ${sql(table)} where id = ${id} and expires_at > now()`
+    : await sql`select data from ${sql(table)} where id = ${id}`
   return (rows[0]?.data as T) ?? null
 }
 
-export async function remove(table: 'sessions' | 'fit_passes', id: string) {
+export async function remove(table: Table, id: string) {
   if (!sql) {
     memory.delete(`${table}:${id}`)
     return
   }
-  if (table === 'sessions') await sql`delete from sessions where id = ${id}`
-  else await sql`delete from fit_passes where id = ${id}`
+  await sql`delete from ${sql(table)} where id = ${id}`
 }
 
-/** ses_xxx / fp_xxx 형태의 짧은 식별자. */
+/** ses_xxx / fp_xxx / upl_xxx 형태의 짧은 식별자. */
 export function newId(prefix: string) {
   return `${prefix}_${crypto.randomUUID().replace(/-/g, '').slice(0, 20)}`
 }

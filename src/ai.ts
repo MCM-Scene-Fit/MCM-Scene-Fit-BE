@@ -201,4 +201,57 @@ function sanitizeParsed(parsed: ParsedConditions): ParsedConditions {
   }
 }
 
+export type WeatherReference = {
+  summary: string
+  usableForMaterialJudgement: boolean
+}
+
+/**
+ * 목적지·시기 참고 날씨. 실시간 예보가 아니라 일반적인 계절 정보다.
+ * 공식 관리 정보가 없으므로 usableForMaterialJudgement는 항상 false다. (설계 원칙 3)
+ * Fit Check 판정에 자동 반영하지 않는다.
+ */
+export async function weatherReference(destination: string, period: string): Promise<WeatherReference> {
+  const apiKey = process.env.GEMINI_API_KEY
+  const fallback: WeatherReference = {
+    summary: `${destination} ${period} 날씨는 시점에 따라 달라질 수 있습니다. 출발 전 별도로 확인해 주세요.`,
+    usableForMaterialJudgement: false,
+  }
+  if (!apiKey) return fallback
+
+  try {
+    const ai = new GoogleGenAI({ apiKey })
+    const response = await ai.models.generateContent({
+      model: MODEL,
+      contents: `목적지: ${destination}\n시기: ${period}`,
+      config: {
+        systemInstruction: WEATHER_SYSTEM,
+        responseMimeType: 'application/json',
+        responseJsonSchema: WEATHER_SCHEMA,
+      },
+    })
+    if (!response.text) return fallback
+    const parsed = JSON.parse(response.text) as { summary: string }
+    if (!parsed.summary) return fallback
+    // usableForMaterialJudgement는 모델 응답과 무관하게 항상 false로 고정한다.
+    return { summary: parsed.summary, usableForMaterialJudgement: false }
+  } catch {
+    return fallback
+  }
+}
+
+const WEATHER_SYSTEM = `너는 여행 참고용 계절 정보를 한 문장으로 요약하는 담당이다.
+실시간 예보가 아니라 그 시기의 일반적인 기후 특징을 짧게 알려준다.
+확신할 수 없는 정확한 수치(정확한 기온, 강수 확률 등)는 만들어내지 마라.
+소재의 방수·내구성에 대해서는 언급하지 마라. 존댓말 한 문장으로 답하라.`
+
+const WEATHER_SCHEMA = {
+  type: 'object',
+  properties: {
+    summary: { type: 'string' },
+  },
+  required: ['summary'],
+  additionalProperties: false,
+} as const
+
 export { EXPERIENCE_LABEL }

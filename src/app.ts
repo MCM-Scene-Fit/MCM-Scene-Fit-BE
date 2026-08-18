@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
-import { explain, parseConditions as parseConditionsWithAI } from './ai.js'
+import { explain, parseConditions as parseConditionsWithAI, weatherReference } from './ai.js'
 import { CARRY_ITEMS } from './data/items.js'
 import { STORES } from './data/labels.js'
 import { PRODUCTS, getProduct } from './data/products.js'
@@ -36,7 +36,7 @@ export const app = new Hono()
 app.use('*', cors({ origin: '*', allowHeaders: ['Content-Type', 'X-Session-Id'], exposeHeaders: ['X-Session-Id'] }))
 
 /** 실패 응답은 전부 같은 모양으로 내려간다. */
-function fail(code: string, message: string, status: 400 | 404 | 409 | 500 | 501, details?: unknown) {
+function fail(code: string, message: string, status: 400 | 404 | 409 | 413 | 415 | 500 | 501, details?: unknown) {
   return Response.json({ error: { code, message, ...(details ? { details } : {}) } }, { status })
 }
 
@@ -236,6 +236,68 @@ app.get('/v1/fit-passes/:fitPassId', async (c) => {
   const data = await get<Record<string, unknown>>('fit_passes', c.req.param('fitPassId'))
   if (!data) return fail('FIT_PASS_NOT_FOUND', '신청 내역을 찾을 수 없습니다.', 404)
   return c.json({ data })
+})
+
+// ---------------------------------------------------------------- 날씨 참고 (P1)
+
+app.get('/v1/weather', async (c) => {
+  const destination = c.req.query('destination')
+  const period = c.req.query('period')
+  if (!destination || !period) {
+    return fail('VALIDATION_ERROR', 'destination과 period를 모두 보내 주세요.', 400)
+  }
+  return c.json({ data: await weatherReference(destination, period) })
+})
+
+// ---------------------------------------------------------------- 전신 사진 임시 업로드 (P1)
+
+const UPLOAD_TTL_MS = 60 * 60 * 1000
+const MAX_UPLOAD_BYTES = 8 * 1024 * 1024
+const ALLOWED_UPLOAD_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp'])
+
+type UploadRecord = { base64: string; mimeType: string }
+
+app.post('/v1/uploads', async (c) => {
+  const body = await c.req.parseBody().catch(() => null)
+  const file = body?.file
+  if (!(file instanceof File)) {
+    return fail('VALIDATION_ERROR', 'file 필드로 이미지를 보내 주세요.', 400)
+  }
+  if (!ALLOWED_UPLOAD_TYPES.has(file.type)) {
+    return fail('UNSUPPORTED_MEDIA_TYPE', 'jpeg·png·webp만 업로드할 수 있습니다.', 415, { mimeType: file.type })
+  }
+  if (file.size > MAX_UPLOAD_BYTES) {
+    return fail('IMAGE_TOO_LARGE', '업로드 용량은 8MB를 넘을 수 없습니다.', 413, { sizeBytes: file.size })
+  }
+
+  const base64 = Buffer.from(await file.arrayBuffer()).toString('base64')
+  const uploadId = newId('upl')
+  const expiresAt = new Date(Date.now() + UPLOAD_TTL_MS)
+  await put('uploads', uploadId, { base64, mimeType: file.type } satisfies UploadRecord, expiresAt)
+
+  return c.json(
+    {
+      data: {
+        uploadId,
+        url: `${new URL(c.req.url).origin}/v1/uploads/${uploadId}/content`,
+        expiresAt: expiresAt.toISOString(),
+      },
+    },
+    201,
+  )
+})
+
+app.get('/v1/uploads/:uploadId/content', async (c) => {
+  const record = await get<UploadRecord>('uploads', c.req.param('uploadId'))
+  if (!record) return fail('VALIDATION_ERROR', '이미지가 없거나 만료되었습니다.', 404)
+  return new Response(Buffer.from(record.base64, 'base64'), {
+    headers: { 'Content-Type': record.mimeType, 'Cache-Control': 'private, max-age=3600' },
+  })
+})
+
+app.delete('/v1/uploads/:uploadId', async (c) => {
+  await remove('uploads', c.req.param('uploadId'))
+  return new Response(null, { status: 204 })
 })
 
 // ---------------------------------------------------------------- 안 하는 것
