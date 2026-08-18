@@ -36,7 +36,7 @@ export const app = new Hono()
 app.use('*', cors({ origin: '*', allowHeaders: ['Content-Type', 'X-Session-Id'], exposeHeaders: ['X-Session-Id'] }))
 
 /** 실패 응답은 전부 같은 모양으로 내려간다. */
-function fail(code: string, message: string, status: 400 | 404 | 409 | 500, details?: unknown) {
+function fail(code: string, message: string, status: 400 | 404 | 409 | 500 | 501, details?: unknown) {
   return Response.json({ error: { code, message, ...(details ? { details } : {}) } }, { status })
 }
 
@@ -234,7 +234,7 @@ app.get('/v1/fit-passes/:fitPassId', async (c) => {
 // ---------------------------------------------------------------- 안 하는 것
 
 for (const path of ['/v1/inventory', '/v1/reservations']) {
-  app.all(path, () => fail('NOT_IMPLEMENTED', '이 서비스는 실시간 재고와 예약 확정을 제공하지 않습니다.', 400))
+  app.all(path, () => fail('NOT_IMPLEMENTED', '이 서비스는 실시간 재고와 예약 확정을 제공하지 않습니다.', 501))
 }
 
 app.get('/', (c) => c.json({ data: { name: 'MCM SCENE FIT API', version: 'v1' } }))
