@@ -3,7 +3,7 @@
 MCM SCENE FIT의 API 서버입니다.
 서비스 기획은 [MCM-Scene-Fit-FE](https://github.com/MCM-Scene-Fit/MCM-Scene-Fit-FE), API 계약은 프론트 레포의 [`Scene-Fit/docs/API.md`](https://github.com/MCM-Scene-Fit/MCM-Scene-Fit-FE/blob/develop/Scene-Fit/docs/API.md)를 따릅니다.
 
-> 현재 단계: **P0 엔드포인트 전체 구현 완료 / 프론트 연동 완료 / Supabase 연결 완료 / 배포 전**
+> 현재 단계: **P0 엔드포인트 전체 구현 완료 / Supabase 연결 완료 / 배포 전**
 > 기준일: 2026-08-18
 
 ---
@@ -44,7 +44,7 @@ MCM SCENE FIT의 API 서버입니다.
 | 추천 (P1) | 완료 | `POST /v1/recommend` |
 | AI 설명 | 완료 | Gemini, 키 없으면 규칙 문장 사용 |
 | DB 연결 | 완료 | Supabase(Postgres), 키 없으면 메모리 |
-| 프론트 연동 | 완료 | 결과·비교·Fit Pass 화면 |
+| 프론트 연동 | 검증 완료 | 로컬에서 결과·비교·Fit Pass 화면 연동을 확인하였습니다. FE 레포 반영은 별도로 진행합니다 |
 | 자동 검사 | 완료 | 12개 |
 | 배포 | 미착수 | Vercel 예정 |
 
