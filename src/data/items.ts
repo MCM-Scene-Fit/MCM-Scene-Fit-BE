@@ -4,7 +4,7 @@ import {
   type CarryLoad,
   type ItemCategory,
   type ItemId,
-} from '../types'
+} from '../types.js'
 
 /**
  * 대표 소지품 카탈로그. 치수·무게는 자주 쓰는 실물 기준의 겉보기값(mm, g)이다.

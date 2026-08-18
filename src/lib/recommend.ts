@@ -1,6 +1,6 @@
-import { PRODUCTS } from '../data/products'
-import { runFitCheck } from './fitCheck'
-import type { Conditions, FitResult, Product } from '../types'
+import { PRODUCTS } from '../data/products.js'
+import { runFitCheck } from './fitCheck.js'
+import type { Conditions, FitResult, Product } from '../types.js'
 
 export type Candidate = { productId: string; fit: FitResult }
 

@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
-import { app } from './src/app'
-import { getProduct } from './src/data/products'
-import { judgeItemFit } from './src/lib/itemFit'
-import { runFitCheck } from './src/lib/fitCheck'
-import type { Conditions } from './src/types'
+import { app } from './src/app.js'
+import { getProduct } from './src/data/products.js'
+import { judgeItemFit } from './src/lib/itemFit.js'
+import { runFitCheck } from './src/lib/fitCheck.js'
+import type { Conditions } from './src/types.js'
 
 const 여행조건: Conditions = {
   scene: 'travel',

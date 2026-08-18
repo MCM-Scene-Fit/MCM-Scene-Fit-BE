@@ -1,5 +1,5 @@
-import { CARRY_ITEM_MAP } from '../data/items'
-import { ITEMS, type EvidenceLevel, type ItemId, type Product } from '../types'
+import { CARRY_ITEM_MAP } from '../data/items.js'
+import { ITEMS, type EvidenceLevel, type ItemId, type Product } from '../types.js'
 
 type Box = {
   widthMm: number

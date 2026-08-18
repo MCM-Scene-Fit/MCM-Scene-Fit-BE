@@ -1,12 +1,12 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
-import { explain } from './ai'
-import { CARRY_ITEMS } from './data/items'
-import { STORES } from './data/labels'
-import { PRODUCTS, getProduct } from './data/products'
-import { runFitCheck } from './lib/fitCheck'
-import { recommend } from './lib/recommend'
-import { get, newId, put, remove } from './db'
+import { explain } from './ai.js'
+import { CARRY_ITEMS } from './data/items.js'
+import { STORES } from './data/labels.js'
+import { PRODUCTS, getProduct } from './data/products.js'
+import { runFitCheck } from './lib/fitCheck.js'
+import { recommend } from './lib/recommend.js'
+import { get, newId, put, remove } from './db.js'
 import {
   ITEMS,
   MOBILITY,
@@ -18,7 +18,7 @@ import {
   type Mobility,
   type Scene,
   type WearStyle,
-} from './types'
+} from './types.js'
 
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000
 const EXPERIENCES: FitPassExperience[] = ['fit-ratio', 'storage-test', 'styling', 'color-compare', 'care']

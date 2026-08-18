@@ -1,7 +1,7 @@
-import { CARRY_SCORE_POINTS, ITEM_LABEL, SCENE_LABEL, WEAR_LABEL } from '../data/labels'
-import { sumCarryLoad } from '../data/items'
-import { PRODUCTS } from '../data/products'
-import { formatOccupancy, itemFitsProduct, judgeItemFit } from './itemFit'
+import { CARRY_SCORE_POINTS, ITEM_LABEL, SCENE_LABEL, WEAR_LABEL } from '../data/labels.js'
+import { sumCarryLoad } from '../data/items.js'
+import { PRODUCTS } from '../data/products.js'
+import { formatOccupancy, itemFitsProduct, judgeItemFit } from './itemFit.js'
 import type {
   AxisStatus,
   Conditions,
@@ -10,7 +10,7 @@ import type {
   ItemId,
   ItemVerdict,
   Product,
-} from '../types'
+} from '../types.js'
 
 /** 받침이 있으면 true. 은/는, 이/가를 고르는 데 쓴다. */
 function hasFinalConsonant(word: string) {

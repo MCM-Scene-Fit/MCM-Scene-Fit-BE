@@ -1,6 +1,6 @@
 import { GoogleGenAI } from '@google/genai'
-import { EXPERIENCE_LABEL, ITEM_LABEL, SCENE_LABEL, WEAR_LABEL } from './data/labels'
-import type { Conditions, FitResult, Product } from './types'
+import { EXPERIENCE_LABEL, ITEM_LABEL, SCENE_LABEL, WEAR_LABEL } from './data/labels.js'
+import type { Conditions, FitResult, Product } from './types.js'
 
 export type Explanation = {
   matches: string[]

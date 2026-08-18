@@ -1,5 +1,5 @@
-import { deriveLikelyStorage } from '../lib/itemFit'
-import type { Product, ProductColor } from '../types'
+import { deriveLikelyStorage } from '../lib/itemFit.js'
+import type { Product, ProductColor } from '../types.js'
 
 /**
  * MCM 공식몰(kr.mcmworldwide.com) 공개 정보로 검수한 P0 10개.

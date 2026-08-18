@@ -1,4 +1,4 @@
-import { CARRY_ITEMS } from './items'
+import { CARRY_ITEMS } from './items.js'
 import type {
   AxisStatus,
   BodyBuild,
@@ -8,7 +8,7 @@ import type {
   Mobility,
   Scene,
   WearStyle,
-} from '../types'
+} from '../types.js'
 
 export const SCENE_LABEL: Record<Scene, string> = {
   travel: '여행',
