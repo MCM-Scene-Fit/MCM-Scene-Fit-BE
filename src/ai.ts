@@ -9,7 +9,7 @@ export type Explanation = {
   storeQuestions: string[]
 }
 
-const MODEL = 'gemini-2.5-flash'
+const MODEL = 'gemini-3.6-flash'
 
 /**
  * 판정을 바꾸지 않는다. 규칙 엔진이 낸 결과를 사람이 읽기 좋은 문장으로만 다듬는다.
