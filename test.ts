@@ -169,7 +169,16 @@ async function run() {
   // 확인 완료여도 재고 확정을 뜻하지 않는다는 문구는 남아 있어야 한다.
   assert.ok(오래된신청.data.demo === true && 오래된신청.data.disclaimer.includes('재고'))
 
-  console.log('통과: 22개 검사 모두 성공')
+  // 23. 장면 컨셉: AI 키가 없어도 조건 라벨로 컨셉을 만든다.
+  const 컨셉 = (await (await post('/v1/ai/scene-concept', 여행조건)).json()) as any
+  assert.ok(컨셉.data.concept.length > 0, '컨셉 이름이 비었다')
+  assert.ok(컨셉.data.description.length > 0, '컨셉 설명이 비었다')
+  assert.ok(컨셉.data.concept.includes('도쿄'), '목적지가 컨셉에 반영되지 않았다')
+
+  // 24. 조건이 덜 채워지면 409.
+  assert.equal((await post('/v1/ai/scene-concept', { scene: 'travel' })).status, 409)
+
+  console.log('통과: 24개 검사 모두 성공')
 }
 
 run().catch((error) => {

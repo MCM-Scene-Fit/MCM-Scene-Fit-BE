@@ -1,5 +1,5 @@
 import { GoogleGenAI } from '@google/genai'
-import { EXPERIENCE_LABEL, ITEM_LABEL, SCENE_LABEL, WEAR_LABEL } from './data/labels.js'
+import { EXPERIENCE_LABEL, ITEM_LABEL, MOBILITY_LABEL, SCENE_LABEL, WEAR_LABEL } from './data/labels.js'
 import { ITEMS, MOBILITY, SCENES, type Conditions, type FitResult, type ItemId, type Mobility, type Product, type Scene } from './types.js'
 
 export type Explanation = {
@@ -253,5 +253,93 @@ const WEATHER_SCHEMA = {
   required: ['summary'],
   additionalProperties: false,
 } as const
+
+export type SceneConcept = {
+  concept: string
+  description: string
+}
+
+/**
+ * 사용자가 고른 조건을 하나의 장면 컨셉으로 이름 붙인다.
+ * 예: 여행 + 오래 걷기 + 카메라 + 도쿄 10월 -> "Tokyo Archive Walker"
+ *
+ * 조건에 없는 사실을 지어내지 않는다. 제품은 언급하지 않는다.
+ * API 키가 없으면 조건 라벨을 그대로 조합해 돌려준다.
+ */
+export async function sceneConcept(conditions: Conditions): Promise<SceneConcept> {
+  const fallback = fallbackConcept(conditions)
+  const apiKey = process.env.GEMINI_API_KEY
+  if (!apiKey || !conditions.scene) return fallback
+
+  try {
+    const ai = new GoogleGenAI({ apiKey })
+    const response = await ai.models.generateContent({
+      model: MODEL,
+      contents: JSON.stringify(conditionBrief(conditions)),
+      config: {
+        systemInstruction: CONCEPT_SYSTEM,
+        responseMimeType: 'application/json',
+        responseJsonSchema: CONCEPT_SCHEMA,
+      },
+    })
+    if (!response.text) return fallback
+    const parsed = JSON.parse(response.text) as SceneConcept
+    if (!parsed.concept || !parsed.description) return fallback
+    return {
+      concept: parsed.concept.slice(0, 40),
+      description: parsed.description.slice(0, 80),
+    }
+  } catch {
+    return fallback
+  }
+}
+
+const CONCEPT_SYSTEM = `너는 MCM SCENE FIT의 장면 컨셉 담당이다. 사용자가 고른 조건을 하나의 장면으로 이름 붙인다.
+
+concept:
+- 영문 2~4단어. 도시나 장소가 있으면 앞에 둔다. 예: Tokyo Archive Walker, Weekend City Commuter
+- 브랜드명이나 제품명은 넣지 마라.
+
+description:
+- 한국어 한 문장. 그 장면 속 사람이 어떤 하루를 보내는지 묘사한다.
+- 존댓말을 쓰지 말고 명사형으로 끝낸다. 예: 많이 걸으며 전시와 오래된 공간을 기록하는 여행자
+
+지켜야 할 것:
+- 입력에 없는 사실을 지어내지 마라. 날씨, 동행, 예산 등을 임의로 넣지 마라.
+- 가방이나 제품을 언급하지 마라. 아직 고르지 않았을 수 있다.
+- 목적지가 비어 있으면 도시 이름을 지어내지 마라.`
+
+const CONCEPT_SCHEMA = {
+  type: 'object',
+  properties: {
+    concept: { type: 'string' },
+    description: { type: 'string' },
+  },
+  required: ['concept', 'description'],
+  additionalProperties: false,
+} as const
+
+/** 프롬프트에 넣을 조건. 코드값 대신 사람이 읽는 라벨로 바꾼다. */
+function conditionBrief(conditions: Conditions) {
+  return {
+    장면: conditions.scene ? SCENE_LABEL[conditions.scene] : null,
+    이동량: conditions.mobility ? MOBILITY_LABEL[conditions.mobility] : null,
+    소지품: conditions.items.map((item) => ITEM_LABEL[item]),
+    착용방식: conditions.wearStyle ? WEAR_LABEL[conditions.wearStyle] : null,
+    목적지시기: conditions.destination || null,
+    이후활용장면: conditions.rewearScene ? SCENE_LABEL[conditions.rewearScene] : null,
+  }
+}
+
+/** AI 없이도 화면에 뭔가는 보여야 한다. 조건 라벨을 그대로 쓴다. */
+function fallbackConcept(conditions: Conditions): SceneConcept {
+  const scene = conditions.scene ? SCENE_LABEL[conditions.scene] : '나의 장면'
+  const mobility = conditions.mobility ? MOBILITY_LABEL[conditions.mobility] : null
+  const place = conditions.destination || null
+  return {
+    concept: place ? `${place} ${scene}` : scene,
+    description: [place, scene, mobility].filter(Boolean).join(' · '),
+  }
+}
 
 export { EXPERIENCE_LABEL }

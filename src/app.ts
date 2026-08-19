@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
-import { explain, parseConditions as parseConditionsWithAI, weatherReference } from './ai.js'
+import { explain, parseConditions as parseConditionsWithAI, sceneConcept, weatherReference } from './ai.js'
 import { CARRY_ITEMS } from './data/items.js'
 import { ITEM_PRESETS, PRESET_KINDS, type PresetKind } from './data/itemPresets.js'
 import { STORES } from './data/labels.js'
@@ -177,6 +177,12 @@ app.post('/v1/ai/explain', async (c) => {
   // fit을 보내면 그 판정을 사실로 취급하고, 없으면 서버가 직접 돌린다.
   const fit = body.fit ?? runFitCheck(product, parsed.conditions)
   return c.json({ data: await explain(product, parsed.conditions, fit) })
+})
+
+app.post('/v1/ai/scene-concept', async (c) => {
+  const parsed = parseConditions(await safeJson(c))
+  if ('error' in parsed) return parsed.error
+  return c.json({ data: await sceneConcept(parsed.conditions) })
 })
 
 app.post('/v1/ai/parse-conditions', async (c) => {
