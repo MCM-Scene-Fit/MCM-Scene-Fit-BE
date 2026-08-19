@@ -15,6 +15,7 @@ import {
   WEAR_STYLES,
   type Conditions,
   type FitPassExperience,
+  type FitPassStatus,
   type ItemId,
   type ItemPresets,
   type Mobility,
@@ -23,6 +24,10 @@ import {
 } from './types.js'
 
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000
+// 부스 데모용 상태 전이 시간. 접수 10초, 확인 중 40초 뒤 확인 완료.
+const DEMO_REQUESTED_MS = 10_000
+const DEMO_CHECKING_MS = 40_000
+
 const EXPERIENCES: FitPassExperience[] = ['fit-ratio', 'storage-test', 'styling', 'color-compare', 'care']
 
 type SessionData = {
@@ -237,7 +242,7 @@ app.post('/v1/fit-passes', async (c) => {
 app.get('/v1/fit-passes/:fitPassId', async (c) => {
   const data = await get<Record<string, unknown>>('fit_passes', c.req.param('fitPassId'))
   if (!data) return fail('FIT_PASS_NOT_FOUND', '신청 내역을 찾을 수 없습니다.', 404)
-  return c.json({ data })
+  return c.json({ data: { ...data, status: demoStatus(String(data.createdAt ?? '')) } })
 })
 
 // ---------------------------------------------------------------- 날씨 참고 (P1)
@@ -311,6 +316,22 @@ for (const path of ['/v1/inventory', '/v1/reservations']) {
 app.get('/', (c) => c.json({ data: { name: 'MCM SCENE FIT API', version: 'v1' } }))
 
 // ---------------------------------------------------------------- 헬퍼
+
+/**
+ * 데모용 상태 전이. 접수 → 확인 중 → 확인 완료로 시간에 따라 넘어간다.
+ * 저장된 값을 바꾸지 않고 조회 시점에 계산한다.
+ *
+ * confirmed는 매장이 회신했다는 뜻이며, 재고가 있다는 의미가 아니다.
+ * 실제 운영에서는 매장 직원이 상태를 바꾸고, 이 함수는 사라진다.
+ */
+function demoStatus(createdAt: string): FitPassStatus {
+  const startedAt = Date.parse(createdAt)
+  if (Number.isNaN(startedAt)) return 'checking'
+  const elapsed = Date.now() - startedAt
+  if (elapsed < DEMO_REQUESTED_MS) return 'requested'
+  if (elapsed < DEMO_CHECKING_MS) return 'checking'
+  return 'confirmed'
+}
 
 async function loadSession(sessionId: string | undefined) {
   if (!sessionId) return null

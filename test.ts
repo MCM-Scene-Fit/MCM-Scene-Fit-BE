@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { app } from './src/app.js'
+import { put } from './src/db.js'
 import { getProduct } from './src/data/products.js'
 import { judgeItemFit } from './src/lib/itemFit.js'
 import { runFitCheck } from './src/lib/fitCheck.js'
@@ -151,7 +152,24 @@ async function run() {
   assert.equal(엉터리.status ?? 200, 200)
   assert.ok(엉터리.data.carryCheck.items[0].fillRatio > 0, '기본 규격으로 판정되지 않았다')
 
-  console.log('통과: 21개 검사 모두 성공')
+  // 22. Fit Pass 상태는 시간에 따라 접수 → 확인 중 → 확인 완료로 넘어간다.
+  const 방금신청 = (await (await json(`/v1/fit-passes/${신청.data.id}`)).json()) as any
+  assert.equal(방금신청.data.status, 'requested', '갓 만든 신청서가 접수 상태가 아니다')
+
+  // 오래된 신청서는 확인 완료로 보인다. (저장된 값을 바꾸지 않고 조회 시 계산)
+  const 오래된id = 'fp_old_for_test'
+  await put('fit_passes', 오래된id, {
+    ...신청.data,
+    id: 오래된id,
+    createdAt: new Date(Date.now() - 60_000).toISOString(),
+  })
+  const 오래된신청 = (await (await json(`/v1/fit-passes/${오래된id}`)).json()) as any
+  assert.equal(오래된신청.data.status, 'confirmed', '시간이 지나도 상태가 안 바뀐다')
+
+  // 확인 완료여도 재고 확정을 뜻하지 않는다는 문구는 남아 있어야 한다.
+  assert.ok(오래된신청.data.demo === true && 오래된신청.data.disclaimer.includes('재고'))
+
+  console.log('통과: 22개 검사 모두 성공')
 }
 
 run().catch((error) => {
