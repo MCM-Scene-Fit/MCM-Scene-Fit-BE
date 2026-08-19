@@ -4,6 +4,7 @@ import type {
   BodyBuild,
   EvidenceLevel,
   FitPassExperience,
+  FitPassStatus,
   ItemId,
   Mobility,
   Scene,
@@ -84,12 +85,20 @@ export const EVIDENCE_LABEL: Record<EvidenceLevel, string> = {
   unlikely: '어려움',
 }
 
-export const EVIDENCE_BADGE: Record<EvidenceLevel, string> = {
-  confirmed: '🟢',
-  estimated: '🔵',
-  'store-check': '🟡',
-  unlikely: '🔴',
-}
+export const AXIS_CODE = {
+  sceneMatch: 'SCN',
+  carryCheck: 'CRY',
+  rewearPotential: 'RWR',
+} as const
+
+export const FLOW_STEPS = [
+  { step: 1, code: 'BAG', label: '제품' },
+  { step: 2, code: 'TRY', label: '미리보기' },
+  { step: 3, code: 'ASK', label: '조건' },
+  { step: 4, code: 'FIT', label: 'Fit Card' },
+  { step: 5, code: 'CMP', label: '비교' },
+  { step: 6, code: 'PAS', label: 'Pass' },
+] as const
 
 export const CARRY_SCORE_POINTS: Record<EvidenceLevel, number> = {
   confirmed: 100,
@@ -110,6 +119,28 @@ export const EXPERIENCE_LABEL: Record<FitPassExperience, string> = {
   styling: '내 옷과 어울리는 스타일링 제안',
   'color-compare': '다른 색상과 대안 제품 비교',
   care: '제품 관리와 오래 사용하는 방법 상담',
+}
+
+export const FIT_PASS_STATUS_LABEL: Record<FitPassStatus, string> = {
+  requested: '요청 접수',
+  checking: '확인 중',
+  confirmed: '확인 완료',
+}
+
+export const FIT_PASS_STATUSES: FitPassStatus[] = ['requested', 'checking', 'confirmed']
+
+export function formatVisitTime(value: string) {
+  if (!value) return '조율 필요'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat('ko-KR', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date)
 }
 
 export const STORES = [

@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { explain, parseConditions as parseConditionsWithAI, weatherReference } from './ai.js'
 import { CARRY_ITEMS } from './data/items.js'
+import { ITEM_PRESETS, PRESET_KINDS, type PresetKind } from './data/itemPresets.js'
 import { STORES } from './data/labels.js'
 import { PRODUCTS, getProduct } from './data/products.js'
 import { runFitCheck } from './lib/fitCheck.js'
@@ -15,6 +16,7 @@ import {
   type Conditions,
   type FitPassExperience,
   type ItemId,
+  type ItemPresets,
   type Mobility,
   type Scene,
   type WearStyle,
@@ -323,8 +325,25 @@ async function safeJson(c: { req: { json: () => Promise<unknown> } }) {
   }
 }
 
+/**
+ * 사용자가 고른 소지품 규격(폰 6.1인치, 노트북 16인치 등)만 통과시킨다.
+ * 목록에 없는 값은 조용히 버리고 기본 규격으로 판정한다.
+ */
+function sanitizePresets(raw: unknown): ItemPresets {
+  const input = (raw ?? {}) as Record<string, unknown>
+  const presets: ItemPresets = {}
+  for (const kind of PRESET_KINDS) {
+    const value = input[kind]
+    if (typeof value !== 'string') continue
+    if (ITEM_PRESETS[kind as PresetKind].some((preset) => preset.id === value)) {
+      presets[kind] = value
+    }
+  }
+  return presets
+}
+
 function emptyConditions(): Conditions {
-  return { scene: null, mobility: null, items: [], wearStyle: null, destination: '', rewearScene: null }
+  return { scene: null, mobility: null, items: [], wearStyle: null, destination: '', rewearScene: null, itemPresets: {} }
 }
 
 /**
@@ -371,6 +390,7 @@ function parseConditions(raw: unknown): { conditions: Conditions } | { error: Re
       items,
       destination: typeof input.destination === 'string' ? input.destination : '',
       rewearScene: rewearScene && SCENES.includes(rewearScene) ? rewearScene : null,
+      itemPresets: sanitizePresets(input.itemPresets),
     },
   }
 }

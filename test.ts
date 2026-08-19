@@ -12,6 +12,7 @@ const 여행조건: Conditions = {
   wearStyle: 'crossbody',
   destination: '도쿄, 10월',
   rewearScene: 'daily',
+  itemPresets: {},
 }
 
 const json = (path: string, init?: RequestInit) => app.request(path, init)
@@ -128,7 +129,29 @@ async function run() {
   assert.equal((await json('/v1/uploads', { method: 'POST', body: 잘못된형식 })).status, 415)
   assert.equal((await json('/v1/uploads', { method: 'POST', body: new FormData() })).status, 400)
 
-  console.log('통과: 19개 검사 모두 성공')
+  // 20. 소지품 규격을 바꾸면 판정 근거(점유율)도 달라진다.
+  const 작은폰 = (await (await post('/v1/fit-check', {
+    productId: 'aren-mini-pouch',
+    conditions: { ...여행조건, items: ['phone'], itemPresets: { phone: 'se' } },
+  })).json()) as any
+  const 큰폰 = (await (await post('/v1/fit-check', {
+    productId: 'aren-mini-pouch',
+    conditions: { ...여행조건, items: ['phone'], itemPresets: { phone: '6.7' } },
+  })).json()) as any
+  assert.ok(
+    작은폰.data.carryCheck.items[0].fillRatio < 큰폰.data.carryCheck.items[0].fillRatio,
+    '소지품 규격을 바꿔도 점유율이 그대로다',
+  )
+
+  // 21. 목록에 없는 규격은 무시하고 기본값으로 판정한다.
+  const 엉터리 = (await (await post('/v1/fit-check', {
+    productId: 'aren-mini-pouch',
+    conditions: { ...여행조건, items: ['phone'], itemPresets: { phone: '없는규격' } },
+  })).json()) as any
+  assert.equal(엉터리.status ?? 200, 200)
+  assert.ok(엉터리.data.carryCheck.items[0].fillRatio > 0, '기본 규격으로 판정되지 않았다')
+
+  console.log('통과: 21개 검사 모두 성공')
 }
 
 run().catch((error) => {

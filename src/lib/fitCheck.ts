@@ -1,4 +1,5 @@
-import { CARRY_SCORE_POINTS, ITEM_LABEL, SCENE_LABEL, WEAR_LABEL } from '../data/labels.js'
+import { itemDisplayLabel, isCanonicalPreset, resolveCarryItem } from '../data/itemPresets.js'
+import { CARRY_SCORE_POINTS, SCENE_LABEL, WEAR_LABEL } from '../data/labels.js'
 import { sumCarryLoad } from '../data/items.js'
 import { PRODUCTS } from '../data/products.js'
 import { formatOccupancy, itemFitsProduct, judgeItemFit } from './itemFit.js'
@@ -12,26 +13,21 @@ import type {
   Product,
 } from '../types.js'
 
-/** 받침이 있으면 true. 은/는, 이/가를 고르는 데 쓴다. */
-function hasFinalConsonant(word: string) {
-  const code = word.charCodeAt(word.length - 1)
-  if (code < 0xac00 || code > 0xd7a3) return false
-  return (code - 0xac00) % 28 !== 0
-}
-
-/** "노트북" -> "노트북은", "휴대전화" -> "휴대전화는" */
-function withTopic(word: string) {
-  return `${word}${hasFinalConsonant(word) ? '은' : '는'}`
-}
-
-function verdictForItem(product: Product, item: ItemId): ItemVerdict {
-  const { level, fillRatio } = judgeItemFit(item, product)
-  const name = ITEM_LABEL[item]
+function verdictForItem(product: Product, item: ItemId, conditions: Conditions): ItemVerdict {
+  const spec = resolveCarryItem(item, conditions.itemPresets)
+  const { level, fillRatio } = judgeItemFit(
+    item,
+    product,
+    spec,
+    isCanonicalPreset(item, conditions.itemPresets),
+  )
+  const name = spec.label
   const fill = formatOccupancy(fillRatio)
 
   if (level === 'confirmed') {
     return {
       item,
+      label: name,
       level,
       fillRatio,
       message: `${name} 수납이 공식 확인되었습니다.`,
@@ -41,6 +37,7 @@ function verdictForItem(product: Product, item: ItemId): ItemVerdict {
   if (level === 'unlikely') {
     return {
       item,
+      label: name,
       level,
       fillRatio,
       message:
@@ -53,17 +50,19 @@ function verdictForItem(product: Product, item: ItemId): ItemVerdict {
   if (level === 'estimated') {
     return {
       item,
+      label: name,
       level,
       fillRatio,
-      message: `${withTopic(name)} 점유 ${fill}로 안정 범위(85% 이하)에 들어가 수납이 예상됩니다.`,
+      message: `점유 ${fill}로 안정 범위(85% 이하)에 들어가 수납이 예상됩니다.`,
     }
   }
 
   return {
     item,
+    label: name,
     level,
     fillRatio,
-    message: `${withTopic(name)} 점유 ${fill}라 입구·형태에 따라 달라질 수 있어 매장에서 확인해 주세요.`,
+    message: `점유 ${fill}라 입구·형태에 따라 달라질 수 있어 매장에서 확인해 주세요.`,
   }
 }
 
@@ -73,23 +72,24 @@ function carryScore(items: ItemVerdict[]) {
   return Math.round(total / items.length)
 }
 
-function carryHeadline(items: ItemVerdict[]) {
+function carryHeadline(items: ItemVerdict[], conditions: Conditions) {
+  const label = (item: ItemId) => itemDisplayLabel(item, conditions.itemPresets)
   const confirmed = items.filter((item) => item.level === 'confirmed')
   const estimated = items.filter((item) => item.level === 'estimated')
   const store = items.filter((item) => item.level === 'store-check')
   const unlikely = items.filter((item) => item.level === 'unlikely')
 
   if (unlikely.length > 0) {
-    return `${ITEM_LABEL[unlikely[0].item]} 수납은 어려워 보입니다`
+    return `${label(unlikely[0].item)} 수납은 어려워 보입니다`
   }
   if (confirmed.length && store.length) {
-    return `${withTopic(confirmed.map((item) => ITEM_LABEL[item.item]).join('·'))} 확인됨 / ${withTopic(store.map((item) => ITEM_LABEL[item.item]).join('·'))} 확인 필요`
+    return `${confirmed.map((item) => label(item.item)).join('·')}은 확인됨 / ${store.map((item) => label(item.item)).join('·')}은 확인 필요`
   }
   if (confirmed.length && estimated.length) {
-    return `${withTopic(confirmed.map((item) => ITEM_LABEL[item.item]).join('·'))} 확인됨 / ${withTopic(estimated.map((item) => ITEM_LABEL[item.item]).join('·'))} 예상됨`
+    return `${confirmed.map((item) => label(item.item)).join('·')}은 확인됨 / ${estimated.map((item) => label(item.item)).join('·')}은 예상됨`
   }
   if (confirmed.length) {
-    return `${confirmed.map((item) => ITEM_LABEL[item.item]).join('·')} 수납이 확인됨`
+    return `${confirmed.map((item) => label(item.item)).join('·')} 수납이 확인됨`
   }
   if (estimated.length && store.length === 0) {
     return '선택한 소지품은 크기상 수납이 예상됩니다'
@@ -130,7 +130,7 @@ function findAlternative(product: Product, conditions: Conditions) {
       if (scene && candidate.sceneTags.includes(scene)) score += 3
       score += items.filter((item) => candidate.officialStorage.includes(item)).length
       if (wear && !candidate.wearStyles.includes(wear)) score -= 5
-      if (items.some((item) => !itemFitsProduct(item, candidate))) score -= 4
+      if (items.some((item) => !itemFitsProduct(item, candidate, resolveCarryItem(item, conditions.itemPresets)))) score -= 4
       return { candidate, score }
     })
     .sort((a, b) => b.score - a.score)
@@ -154,20 +154,20 @@ export function runFitCheck(product: Product, conditions: Conditions): FitResult
     status: sceneStatus(Boolean(scene), scenePositive),
   }
 
-  const itemVerdicts = conditions.items.map((item) => verdictForItem(product, item))
+  const itemVerdicts = conditions.items.map((item) => verdictForItem(product, item, conditions))
   const wearOk = Boolean(
     conditions.wearStyle && product.wearStyles.includes(conditions.wearStyle),
   )
 
   const carryCheck = {
     headline: wearOk
-      ? carryHeadline(itemVerdicts)
+      ? carryHeadline(itemVerdicts, conditions)
       : conditions.wearStyle
         ? `${WEAR_LABEL[conditions.wearStyle]} 착용은 이 제품의 기본 방식이 아닙니다`
-        : carryHeadline(itemVerdicts),
+        : carryHeadline(itemVerdicts, conditions),
     items: itemVerdicts,
     status: carryStatus(itemVerdicts, wearOk, Boolean(conditions.wearStyle)),
-    load: sumCarryLoad(conditions.items),
+    load: sumCarryLoad(conditions.items, (id) => resolveCarryItem(id, conditions.itemPresets)),
     score: carryScore(itemVerdicts),
   }
 
@@ -238,9 +238,17 @@ export function runFitCheck(product: Product, conditions: Conditions): FitResult
   }
 }
 
-export function evidenceTone(level: EvidenceLevel) {
-  if (level === 'confirmed') return 'ok'
-  if (level === 'estimated') return 'estimated'
-  if (level === 'unlikely') return 'bad'
-  return 'warn'
+export function resultEvidence(result: FitResult): EvidenceLevel {
+  const levels = result.carryCheck.items.map((item) => item.level)
+  if (levels.includes('unlikely')) return 'unlikely'
+  if (levels.includes('store-check')) return 'store-check'
+  if (levels.includes('estimated')) return 'estimated'
+  if (levels.length > 0 && levels.every((level) => level === 'confirmed')) return 'confirmed'
+  if (result.sceneMatch.status === 'weak' || result.rewearPotential.status === 'weak') {
+    return 'store-check'
+  }
+  if (result.sceneMatch.status === 'match' && result.carryCheck.status === 'match') {
+    return 'confirmed'
+  }
+  return 'estimated'
 }

@@ -30,6 +30,8 @@ export const ITEMS = [
 ] as const
 export type ItemId = (typeof ITEMS)[number]
 
+export type ItemPresets = Partial<Record<'phone' | 'tablet' | 'laptop' | 'powerbank', string>>
+
 export type CarryLoad = {
   count: number
   volumeMl: number
@@ -52,6 +54,9 @@ export type ProductColor = {
   image: string
   imageWidth: number
   imageHeight: number
+  sideImage: string
+  sideImageWidth: number
+  sideImageHeight: number
 }
 
 export type Product = {
@@ -82,6 +87,7 @@ export type Conditions = {
   scene: Scene | null
   mobility: Mobility | null
   items: ItemId[]
+  itemPresets: ItemPresets
   wearStyle: WearStyle | null
   destination: string
   rewearScene: Scene | null
@@ -99,6 +105,7 @@ export type BodyProfile = {
 
 export type ItemVerdict = {
   item: ItemId
+  label: string
   level: EvidenceLevel
   message: string
   /** 축 정렬 회전 후 가장 빡센 축 점유율. 1을 넘으면 가방 치수 초과. */
@@ -137,6 +144,12 @@ export type FitPassDraft = {
   visitTime: string
   experiences: FitPassExperience[]
   customNote: string
+}
+
+export type FitPassIssued = {
+  id: string
+  storeChecks: string[]
+  createdAt: string
 }
 
 export type FitPassStatus = 'requested' | 'checking' | 'confirmed'

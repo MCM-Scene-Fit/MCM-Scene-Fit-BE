@@ -210,10 +210,13 @@ export function itemVolumeMl(item: Pick<CarryItem, 'widthMm' | 'heightMm' | 'dep
   return Math.round((item.widthMm * item.heightMm * item.depthMm) / 1000)
 }
 
-export function sumCarryLoad(ids: ItemId[]): CarryLoad {
+export function sumCarryLoad(
+  ids: ItemId[],
+  resolve: (id: ItemId) => CarryItem = getCarryItem,
+): CarryLoad {
   return ids.reduce<CarryLoad>(
     (total, id) => {
-      const item = getCarryItem(id)
+      const item = resolve(id)
       total.count += 1
       total.volumeMl += itemVolumeMl(item)
       total.weightG += item.weightG

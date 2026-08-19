@@ -5,7 +5,8 @@ import type { Product, ProductColor } from '../types.js'
  * MCM 공식몰(kr.mcmworldwide.com) 공개 정보로 검수한 P0 10개.
  * 수납 `officialStorage`는 상세 페이지에 해당 품목이 명시된 경우만 넣는다.
  * 치수는 공식 표기(깊이 × 가로 × 세로 cm)를 width/height/depth(mm)로 변환했다.
- * 이미지는 공식 정면 컷을 로컬 자산으로 등록한 것이다. 런타임에 공식몰을 호출하지 않는다.
+ * 이미지는 공식 정면 컷과 갤러리 옆면 컷(_02)을 로컬 자산으로 등록한 것이다.
+ * 런타임에 공식몰을 호출하지 않는다.
  */
 
 const IMAGE_SIZE: Record<string, readonly [number, number]> = {
@@ -26,9 +27,22 @@ const IMAGE_SIZE: Record<string, readonly [number, number]> = {
   MYZGATA01CO001: [720, 373],
 }
 
+const SIDE_IMAGE_SIZE = [2000, 2164] as const
+
 function swatch(id: string, name: string, hex: string, sku: string): ProductColor {
   const [imageWidth, imageHeight] = IMAGE_SIZE[sku]
-  return { id, name, hex, sku, image: `/products/${sku}.webp`, imageWidth, imageHeight }
+  return {
+    id,
+    name,
+    hex,
+    sku,
+    image: `/products/${sku}.webp`,
+    imageWidth,
+    imageHeight,
+    sideImage: `/products/${sku}_side.webp`,
+    sideImageWidth: SIDE_IMAGE_SIZE[0],
+    sideImageHeight: SIDE_IMAGE_SIZE[1],
+  }
 }
 
 function withLikelyStorage(def: Omit<Product, 'likelyStorage'>): Product {
@@ -285,4 +299,9 @@ export function getColor(product: Product, colorId: string) {
 export function bagCardScale(product: Product) {
   const largest = Math.max(...PRODUCTS.map((item) => Math.max(item.widthMm, item.heightMm)))
   return Math.max(0.58, Math.max(product.widthMm, product.heightMm) / largest)
+}
+
+export function bagImageRatio(product: Product, colorId?: string) {
+  const color = getColor(product, colorId ?? product.colors[0].id)
+  return `${color.imageWidth} / ${color.imageHeight}`
 }

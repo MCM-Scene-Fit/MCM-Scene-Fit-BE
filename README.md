@@ -54,7 +54,7 @@ DB를 붙일 때는 [`schema.sql`](./schema.sql)을 먼저 실행합니다.
 ```
 src/
   types.ts          공통 타입·enum
-  data/             가방 10개 · 소지품 16종 · 매장 4곳 · 한글 라벨
+  data/             가방 10개 · 소지품 16종 · 소지품 규격 프리셋 · 매장 4곳 · 한글 라벨
   lib/itemFit.ts    소지품 치수 판정
   lib/fitCheck.ts   규칙 엔진 (세 축 판정, 대안 제품)
   lib/recommend.ts  조건 기반 후보 최대 3개
@@ -66,8 +66,15 @@ schema.sql          테이블 2개
 test.ts             자동 검사
 ```
 
-**`types.ts` · `data/` · `lib/itemFit.ts` · `lib/fitCheck.ts` 는 프론트에서 그대로 가져온 파일입니다.**
-판정이 양쪽에서 갈리면 안 되므로, 고칠 때는 두 레포를 함께 갱신합니다.
+**`types.ts` · `data/` · `lib/itemFit.ts` · `lib/fitCheck.ts` 는 프론트 `develop`에서 그대로 가져온 파일입니다.**
+판정이 양쪽에서 갈리면 안 되므로 이 파일들은 직접 수정하지 않습니다. 프론트가 바뀌면 다시 복사해 맞춥니다.
+
+동기화 확인:
+
+```bash
+diff <(git -C ../MCM-Scene-Fit-FE show origin/develop:Scene-Fit/src/lib/fitCheck.ts) \
+     <(sed "s/\.js'/'/g" src/lib/fitCheck.ts)
+```
 
 ---
 
@@ -114,6 +121,12 @@ Base URL `/v1` · JSON · 비회원 세션(`X-Session-Id`, 24시간)
 
 축 점유율은 소지품과 가방의 가로·세로·폭을 각각 정렬해 비교한 값 중 가장 큰 것입니다.
 
+소지품 중 휴대전화·태블릿·노트북·보조배터리는 사용자가 실제 규격을 고를 수 있습니다. 조건의 `itemPresets`로 전달하면 그 치수로 판정합니다. 목록에 없는 값은 무시하고 기본 규격을 씁니다.
+
+```json
+{ "itemPresets": { "phone": "6.7", "laptop": "16" } }
+```
+
 ### 세 축
 
 | 축 | `match` 조건 |
@@ -147,7 +160,7 @@ npm test
 - 공식 정보 없이 날씨로 소재 판단을 허용하지 않는가
 - 업로드가 허용 형식·용량을 넘으면 거절하고, 삭제 후에는 조회되지 않는가
 
-검사는 항상 메모리 모드로 돌아가 실제 DB를 건드리지 않습니다. (검사 19개)
+검사는 항상 메모리 모드로 돌아가 실제 DB를 건드리지 않습니다. (검사 21개)
 
 ---
 
