@@ -274,7 +274,7 @@ app.get('/v1/weather', async (c) => {
 
 const BACKGROUND_TTL_MS = 24 * 60 * 60 * 1000
 
-type BackgroundRecord = { base64: string; mimeType: string; place: string }
+type BackgroundRecord = { base64: string; mimeType: string; place: string; concept: string; description: string }
 
 /** 같은 조건이면 같은 배경을 재사용한다. 문자열 조건을 짧은 id로 접는다. */
 function backgroundCacheKey(conditions: Conditions) {
@@ -313,7 +313,15 @@ app.post('/v1/scene/background', async (c) => {
   const origin = new URL(c.req.url).origin
   const cached = await get<BackgroundRecord>('uploads', cacheId)
   if (cached) {
-    return c.json({ data: { url: `${origin}/v1/uploads/${cacheId}/content`, place: cached.place, cached: true } })
+    return c.json({
+      data: {
+        url: `${origin}/v1/uploads/${cacheId}/content`,
+        place: cached.place,
+        concept: cached.concept,
+        description: cached.description,
+        cached: true,
+      },
+    })
   }
 
   const generated = await sceneBackground(conditions)
@@ -324,7 +332,18 @@ app.post('/v1/scene/background', async (c) => {
   const expiresAt = new Date(Date.now() + BACKGROUND_TTL_MS)
   await put('uploads', cacheId, generated satisfies BackgroundRecord, expiresAt)
 
-  return c.json({ data: { url: `${origin}/v1/uploads/${cacheId}/content`, place: generated.place, cached: false } }, 201)
+  return c.json(
+    {
+      data: {
+        url: `${origin}/v1/uploads/${cacheId}/content`,
+        place: generated.place,
+        concept: generated.concept,
+        description: generated.description,
+        cached: false,
+      },
+    },
+    201,
+  )
 })
 
 /** 5cm 단위가 아니라 큰 구간으로 묶는다 — 아니면 캐시가 사실상 무의미해진다. */
@@ -382,7 +401,15 @@ app.post('/v1/scene/portrait', async (c) => {
   const origin = new URL(c.req.url).origin
   const cached = await get<BackgroundRecord>('uploads', cacheId)
   if (cached) {
-    return c.json({ data: { url: `${origin}/v1/uploads/${cacheId}/content`, place: cached.place, cached: true } })
+    return c.json({
+      data: {
+        url: `${origin}/v1/uploads/${cacheId}/content`,
+        place: cached.place,
+        concept: cached.concept,
+        description: cached.description,
+        cached: true,
+      },
+    })
   }
 
   const generated = await scenePortrait(conditions, personBody)
@@ -393,7 +420,18 @@ app.post('/v1/scene/portrait', async (c) => {
   const expiresAt = new Date(Date.now() + BACKGROUND_TTL_MS)
   await put('uploads', cacheId, generated satisfies BackgroundRecord, expiresAt)
 
-  return c.json({ data: { url: `${origin}/v1/uploads/${cacheId}/content`, place: generated.place, cached: false } }, 201)
+  return c.json(
+    {
+      data: {
+        url: `${origin}/v1/uploads/${cacheId}/content`,
+        place: generated.place,
+        concept: generated.concept,
+        description: generated.description,
+        cached: false,
+      },
+    },
+    201,
+  )
 })
 
 // ---------------------------------------------------------------- 전신 사진 임시 업로드 (P1)

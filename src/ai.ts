@@ -291,16 +291,25 @@ export type SceneConcept = {
  */
 export async function sceneConcept(conditions: Conditions): Promise<SceneConcept> {
   const fallback = fallbackConcept(conditions)
-  const apiKey = process.env.GEMINI_API_KEY
   if (!conditions.scene) {
     aiWarn('sceneConcept', 'scene 값 없음')
     return fallback
   }
+  const gemini = await conceptViaGemini(conditions)
+  if (gemini) return gemini
+  // Gemini 무료 티어는 하루 호출 수가 적어 시연 중에 쉽게 소진된다.
+  // 조건 나열 문장으로 바로 물러나지 말고, 장소 선정에도 쓰는 OpenAI 통합 호출로 한 번 더 시도한다.
+  const brief = await sceneBriefViaOpenAI(conditions)
+  return brief ? { concept: brief.concept, description: brief.description } : fallback
+}
+
+/** Gemini로만 시도한다. 실패하면 null — 호출한 쪽이 다음 수단을 고른다. */
+async function conceptViaGemini(conditions: Conditions): Promise<SceneConcept | null> {
+  const apiKey = process.env.GEMINI_API_KEY
   if (!apiKey) {
     aiWarn('sceneConcept', 'GEMINI_API_KEY 없음')
-    return (await conceptViaOpenAI(conditions)) ?? fallback
+    return null
   }
-
   try {
     const ai = new GoogleGenAI({ apiKey })
     const response = await ai.models.generateContent({
@@ -312,20 +321,16 @@ export async function sceneConcept(conditions: Conditions): Promise<SceneConcept
         responseJsonSchema: CONCEPT_SCHEMA,
       },
     })
-    if (!response.text) return (await conceptViaOpenAI(conditions)) ?? fallback
+    if (!response.text) return null
     const parsed = JSON.parse(response.text) as SceneConcept
-    if (!parsed.concept || !parsed.description) {
-      return (await conceptViaOpenAI(conditions)) ?? fallback
-    }
+    if (!parsed.concept || !parsed.description) return null
     return {
       concept: parsed.concept.slice(0, 40),
       description: parsed.description.slice(0, 80),
     }
   } catch (error) {
-    // Gemini 무료 티어는 하루 호출 수가 적어 시연 중에 쉽게 소진된다.
-    // 조건 나열 문장으로 바로 물러나지 말고, 이미 쓰고 있는 OpenAI로 한 번 더 시도한다.
     aiWarn('sceneConcept', error)
-    return (await conceptViaOpenAI(conditions)) ?? fallback
+    return null
   }
 }
 
@@ -379,14 +384,29 @@ function fallbackConcept(conditions: Conditions): SceneConcept {
 
 export { EXPERIENCE_LABEL }
 
-export type SceneBackground = { base64: string; mimeType: string; place: string }
+export type SceneBackground = SceneConcept & { base64: string; mimeType: string; place: string }
 
 const CHAT_MODEL = 'gpt-4o-mini'
 const IMAGE_MODEL = 'gpt-image-1-mini'
 
-const PLACE_SYSTEM = `너는 MCM SCENE FIT의 배경 장소 담당이다. 사용자가 고른 조건에 맞는, 목적지 도시 안의 실제 장소 하나를 지목한다.
+/**
+ * 장소 선정과 장면 컨셉은 원래 따로 OpenAI를 불렀다. 조건을 보고 장면을 이해한다는
+ * 점에서 하는 일이 겹쳐서, Gemini가 막혔을 때는 이 프롬프트 하나로 네 값을 한 번에 받는다.
+ * (Gemini가 살아있을 때는 concept는 그쪽에서 오고, 이 호출은 place만 쓰인다.)
+ */
+const SCENE_BRIEF_SYSTEM = `너는 MCM SCENE FIT의 장면 담당이다. 사용자가 고른 조건을 보고 두 가지를 만든다.
+
+concept: 영문 2~4단어. 도시나 장소가 있으면 앞에 둔다. 예: Tokyo Archive Walker, Weekend City Commuter
+  브랜드명이나 제품명은 넣지 마라.
+
+description: 한국어 한 문장. 그 장면 속 사람이 어떤 하루를 보내는지 묘사한다.
+  존댓말을 쓰지 말고 명사형으로 끝낸다. 예: 많이 걸으며 전시와 오래된 공간을 기록하는 여행자
+
+place·imagePrompt: 목적지 도시 안에서 조건에 맞는 실제 장소 하나를 고른다.
 
 지켜야 할 것:
+- concept·description은 입력에 없는 사실(날씨, 동행, 예산 등)을 지어내지 마라.
+  가방이나 제품을 언급하지 마라. 아직 고르지 않았을 수 있다.
 - "동네" 수준으로 뭉뚱그리지 마라. place는 그 동네 안에 실제로 있는 구체적인 지명이어야
   한다 — 성당·광장·시장·다리·계단·골목처럼 실제로 존재하고 이름이 붙어 있는 곳.
   입력에 등장하는 도시가 무엇이든, 그 도시 안에서 매번 새로 떠올려라 — 예시를 외워
@@ -403,53 +423,15 @@ const PLACE_SYSTEM = `너는 MCM SCENE FIT의 배경 장소 담당이다. 사용
 imagePrompt: 영어 한 문장. 그 동네의 실제 분위기를 묘사한다. 사람 없음, 가방 없음, 글자·로고 없음을 반드시 명시하고,
 그림·일러스트가 아니라 실제 촬영한 사진처럼 보이도록 "candid documentary street photography, shot on a 35mm lens, natural exposure, realistic film grain" 같은 사진 촬영 표현을 반드시 포함한다.
 
-JSON으로만 답한다: {"place": "한국어 장소명", "imagePrompt": "english prompt"}`
+JSON으로만 답한다: {"concept": "...", "description": "...", "place": "한국어 장소명", "imagePrompt": "english prompt"}`
+
+type SceneBrief = SceneConcept & { place: string; imagePrompt: string }
 
 /**
- * Gemini가 막혔을 때 쓰는 두 번째 시도. 같은 지시문을 OpenAI에 그대로 넘긴다.
- * 여기까지 실패하면 그때 규칙 엔진 문장으로 물러난다.
+ * 장소(place·imagePrompt)와, Gemini가 막혔을 때 쓸 컨셉(concept·description)을
+ * 한 번의 OpenAI 호출로 같이 받는다. 예전에는 이 둘을 따로 불러 호출 수가 두 배였다.
  */
-async function conceptViaOpenAI(conditions: Conditions): Promise<SceneConcept | null> {
-  const apiKey = process.env.OPENAI_API_KEY
-  if (!apiKey) return null
-
-  try {
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: CHAT_MODEL,
-        response_format: { type: 'json_object' },
-        messages: [
-          {
-            role: 'system',
-            content: `${CONCEPT_SYSTEM}\n\nJSON으로만 답한다: {"concept": "...", "description": "..."}`,
-          },
-          { role: 'user', content: JSON.stringify(conditionBrief(conditions)) },
-        ],
-        max_tokens: 200,
-      }),
-    })
-    if (!res.ok) {
-      aiWarn('conceptViaOpenAI', `HTTP ${res.status}`)
-      return null
-    }
-    const data = (await res.json()) as { choices?: { message?: { content?: string } }[] }
-    const content = data.choices?.[0]?.message?.content
-    if (!content) return null
-    const parsed = JSON.parse(content) as SceneConcept
-    if (!parsed.concept || !parsed.description) return null
-    return {
-      concept: parsed.concept.slice(0, 40),
-      description: parsed.description.slice(0, 80),
-    }
-  } catch (error) {
-    aiWarn('conceptViaOpenAI', error)
-    return null
-  }
-}
-
-async function pickScenePlace(conditions: Conditions): Promise<{ place: string; imagePrompt: string } | null> {
+async function sceneBriefViaOpenAI(conditions: Conditions): Promise<SceneBrief | null> {
   const apiKey = process.env.OPENAI_API_KEY
   if (!apiKey || !conditions.destination.trim()) return null
 
@@ -461,24 +443,29 @@ async function pickScenePlace(conditions: Conditions): Promise<{ place: string; 
         model: CHAT_MODEL,
         response_format: { type: 'json_object' },
         messages: [
-          { role: 'system', content: PLACE_SYSTEM },
+          { role: 'system', content: SCENE_BRIEF_SYSTEM },
           { role: 'user', content: JSON.stringify(conditionBrief(conditions)) },
         ],
-        max_tokens: 200,
+        max_tokens: 300,
       }),
     })
     if (!res.ok) {
-      aiWarn('pickScenePlace', `HTTP ${res.status} ${(await res.text()).slice(0, 160)}`)
+      aiWarn('sceneBriefViaOpenAI', `HTTP ${res.status} ${(await res.text()).slice(0, 160)}`)
       return null
     }
     const data = (await res.json()) as { choices?: { message?: { content?: string } }[] }
     const content = data.choices?.[0]?.message?.content
     if (!content) return null
-    const parsed = JSON.parse(content) as { place?: string; imagePrompt?: string }
-    if (!parsed.place || !parsed.imagePrompt) return null
-    return { place: parsed.place, imagePrompt: parsed.imagePrompt }
+    const parsed = JSON.parse(content) as Partial<SceneBrief>
+    if (!parsed.place || !parsed.imagePrompt || !parsed.concept || !parsed.description) return null
+    return {
+      concept: parsed.concept.slice(0, 40),
+      description: parsed.description.slice(0, 80),
+      place: parsed.place,
+      imagePrompt: parsed.imagePrompt,
+    }
   } catch (error) {
-    aiWarn('pickScenePlace', error)
+    aiWarn('sceneBriefViaOpenAI', error)
     return null
   }
 }
@@ -504,6 +491,19 @@ function fallbackScenePlace(conditions: Conditions) {
   }
 }
 
+/**
+ * 배경 화면에는 컨셉 문구도 같이 뜬다. 예전에는 이걸 FE가 /ai/scene-concept로 따로
+ * 불러왔는데, 장소를 고르는 OpenAI 호출이 이미 컨셉도 만들 수 있어서 여기서 같이 받는다.
+ * Gemini는 무료라 되도록 그쪽 결과를 쓰고, 안 되면 이 OpenAI 결과로 대신한다.
+ * 두 호출은 동시에 보낸다 — 순서대로 기다리면 안 그래도 느린 배경 생성이 더 늦어진다.
+ */
+async function sceneBriefFor(conditions: Conditions) {
+  const [gemini, openai] = await Promise.all([conceptViaGemini(conditions), sceneBriefViaOpenAI(conditions)])
+  const place = openai ?? fallbackScenePlace(conditions)
+  const concept = gemini ?? (openai ? { concept: openai.concept, description: openai.description } : null)
+  return { place, concept }
+}
+
 export async function sceneBackground(conditions: Conditions): Promise<SceneBackground | null> {
   const apiKey = process.env.OPENAI_API_KEY
   if (!apiKey) {
@@ -511,11 +511,12 @@ export async function sceneBackground(conditions: Conditions): Promise<SceneBack
     return null
   }
 
-  const picked = (await pickScenePlace(conditions)) ?? fallbackScenePlace(conditions)
+  const { place: picked, concept } = await sceneBriefFor(conditions)
   if (!picked) {
     aiWarn('sceneBackground', '목적지가 없어 장소를 정할 수 없음')
     return null
   }
+  const { concept: conceptText, description } = concept ?? fallbackConcept(conditions)
 
   try {
     const res = await fetch('https://api.openai.com/v1/images/generations', {
@@ -536,7 +537,7 @@ export async function sceneBackground(conditions: Conditions): Promise<SceneBack
     const data = (await res.json()) as { data?: { b64_json?: string }[] }
     const b64 = data.data?.[0]?.b64_json
     if (!b64) return null
-    return { base64: b64, mimeType: 'image/png', place: picked.place }
+    return { base64: b64, mimeType: 'image/png', place: picked.place, concept: conceptText, description }
   } catch (error) {
     aiWarn('sceneBackground', error)
     return null
@@ -597,9 +598,10 @@ export async function scenePortrait(
   const apiKey = process.env.OPENAI_API_KEY
   if (!apiKey) return null
 
-  const picked = await pickScenePlace(conditions)
+  const { place: picked, concept } = await sceneBriefFor(conditions)
   const placeLine = picked ? picked.imagePrompt : 'a plain quiet city street, natural daylight'
   const place = picked?.place ?? ''
+  const { concept: conceptText, description } = concept ?? fallbackConcept(conditions)
 
   const prompt = [
     `Full-body photograph of ${SEX_TEXT[body.sex]} with a ${BUILD_TEXT[body.build]}, ${heightBucketText(body.heightCm)}, standing on a ${placeLine}`,
@@ -617,7 +619,7 @@ export async function scenePortrait(
     const data = (await res.json()) as { data?: { b64_json?: string }[] }
     const b64 = data.data?.[0]?.b64_json
     if (!b64) return null
-    return { base64: b64, mimeType: 'image/png', place }
+    return { base64: b64, mimeType: 'image/png', place, concept: conceptText, description }
   } catch (error) {
     aiWarn('scenePortrait', error)
     return null
