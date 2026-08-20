@@ -1,6 +1,14 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
-import { explain, parseConditions as parseConditionsWithAI, sceneConcept, weatherReference } from './ai.js'
+import {
+  explain,
+  parseConditions as parseConditionsWithAI,
+  sceneBackground,
+  sceneConcept,
+  scenePortrait,
+  type ScenePortraitBody,
+  weatherReference,
+} from './ai.js'
 import { CARRY_ITEMS } from './data/items.js'
 import { ITEM_PRESETS, PRESET_KINDS, type PresetKind } from './data/itemPresets.js'
 import { STORES } from './data/labels.js'
@@ -260,6 +268,170 @@ app.get('/v1/weather', async (c) => {
     return fail('VALIDATION_ERROR', 'destination과 period를 모두 보내 주세요.', 400)
   }
   return c.json({ data: await weatherReference(destination, period) })
+})
+
+// ---------------------------------------------------------------- 장면 배경 (실시간 생성 + 캐시)
+
+const BACKGROUND_TTL_MS = 24 * 60 * 60 * 1000
+
+type BackgroundRecord = { base64: string; mimeType: string; place: string; concept: string; description: string }
+
+/** 같은 조건이면 같은 배경을 재사용한다. 문자열 조건을 짧은 id로 접는다. */
+function backgroundCacheKey(conditions: Conditions) {
+  const raw = JSON.stringify({
+    destination: conditions.destination.trim().toLowerCase(),
+    scene: conditions.scene,
+    mobility: conditions.mobility,
+    wearStyle: conditions.wearStyle,
+    items: [...conditions.items].sort(),
+  })
+  let hash = 0
+  for (let i = 0; i < raw.length; i += 1) {
+    hash = (Math.imul(hash, 31) + raw.charCodeAt(i)) | 0
+  }
+  return `bg_${(hash >>> 0).toString(36)}`
+}
+
+app.post('/v1/scene/background', async (c) => {
+  const body = (await safeJson(c)) as Record<string, unknown>
+  const destination = typeof body.destination === 'string' ? body.destination.trim() : ''
+  if (!destination) {
+    return fail('VALIDATION_ERROR', 'destination을 보내 주세요.', 400)
+  }
+
+  const conditions: Conditions = {
+    scene: (body.scene as Scene | null) ?? null,
+    mobility: (body.mobility as Mobility | null) ?? null,
+    wearStyle: (body.wearStyle as WearStyle | null) ?? null,
+    items: Array.isArray(body.items) ? (body.items as ItemId[]) : [],
+    destination,
+    rewearScene: null,
+    itemPresets: {},
+  }
+
+  const cacheId = backgroundCacheKey(conditions)
+  const origin = new URL(c.req.url).origin
+  const cached = await get<BackgroundRecord>('uploads', cacheId)
+  if (cached) {
+    return c.json({
+      data: {
+        url: `${origin}/v1/uploads/${cacheId}/content`,
+        place: cached.place,
+        concept: cached.concept,
+        description: cached.description,
+        cached: true,
+      },
+    })
+  }
+
+  const generated = await sceneBackground(conditions)
+  if (!generated) {
+    return fail('SCENE_BACKGROUND_UNAVAILABLE', '지금은 장면 배경을 만들 수 없습니다. 목적지를 입력했는지 확인해 주세요.', 409)
+  }
+
+  const expiresAt = new Date(Date.now() + BACKGROUND_TTL_MS)
+  await put('uploads', cacheId, generated satisfies BackgroundRecord, expiresAt)
+
+  return c.json(
+    {
+      data: {
+        url: `${origin}/v1/uploads/${cacheId}/content`,
+        place: generated.place,
+        concept: generated.concept,
+        description: generated.description,
+        cached: false,
+      },
+    },
+    201,
+  )
+})
+
+/** 5cm 단위가 아니라 큰 구간으로 묶는다 — 아니면 캐시가 사실상 무의미해진다. */
+function heightBucket(heightCm: number) {
+  if (heightCm < 155) return 150
+  if (heightCm < 165) return 160
+  if (heightCm < 175) return 170
+  if (heightCm < 185) return 180
+  return 190
+}
+
+function portraitCacheKey(conditions: Conditions, body: ScenePortraitBody) {
+  const raw = JSON.stringify({
+    destination: conditions.destination.trim().toLowerCase(),
+    scene: conditions.scene,
+    mobility: conditions.mobility,
+    wearStyle: conditions.wearStyle,
+    items: [...conditions.items].sort(),
+    heightBucket: heightBucket(body.heightCm),
+    build: body.build,
+    sex: body.sex,
+  })
+  let hash = 0
+  for (let i = 0; i < raw.length; i += 1) {
+    hash = (Math.imul(hash, 31) + raw.charCodeAt(i)) | 0
+  }
+  return `pt_${(hash >>> 0).toString(36)}`
+}
+
+app.post('/v1/scene/portrait', async (c) => {
+  const body = (await safeJson(c)) as Record<string, unknown>
+  const destination = typeof body.destination === 'string' ? body.destination.trim() : ''
+  if (!destination) {
+    return fail('VALIDATION_ERROR', 'destination을 보내 주세요.', 400)
+  }
+  const heightCm = typeof body.heightCm === 'number' ? body.heightCm : NaN
+  const build = body.build as ScenePortraitBody['build']
+  const sex = body.sex as ScenePortraitBody['sex']
+  if (!Number.isFinite(heightCm) || !['slim', 'standard', 'broad'].includes(build) || !['female', 'male'].includes(sex)) {
+    return fail('VALIDATION_ERROR', 'heightCm·build·sex를 보내 주세요.', 400)
+  }
+  const personBody: ScenePortraitBody = { heightCm, build, sex }
+
+  const conditions: Conditions = {
+    scene: (body.scene as Scene | null) ?? null,
+    mobility: (body.mobility as Mobility | null) ?? null,
+    wearStyle: (body.wearStyle as WearStyle | null) ?? null,
+    items: Array.isArray(body.items) ? (body.items as ItemId[]) : [],
+    destination,
+    rewearScene: null,
+    itemPresets: {},
+  }
+
+  const cacheId = portraitCacheKey(conditions, personBody)
+  const origin = new URL(c.req.url).origin
+  const cached = await get<BackgroundRecord>('uploads', cacheId)
+  if (cached) {
+    return c.json({
+      data: {
+        url: `${origin}/v1/uploads/${cacheId}/content`,
+        place: cached.place,
+        concept: cached.concept,
+        description: cached.description,
+        cached: true,
+      },
+    })
+  }
+
+  const generated = await scenePortrait(conditions, personBody)
+  if (!generated) {
+    return fail('SCENE_PORTRAIT_UNAVAILABLE', '지금은 장면 인물을 만들 수 없습니다. 목적지를 입력했는지 확인해 주세요.', 409)
+  }
+
+  const expiresAt = new Date(Date.now() + BACKGROUND_TTL_MS)
+  await put('uploads', cacheId, generated satisfies BackgroundRecord, expiresAt)
+
+  return c.json(
+    {
+      data: {
+        url: `${origin}/v1/uploads/${cacheId}/content`,
+        place: generated.place,
+        concept: generated.concept,
+        description: generated.description,
+        cached: false,
+      },
+    },
+    201,
+  )
 })
 
 // ---------------------------------------------------------------- 전신 사진 임시 업로드 (P1)
