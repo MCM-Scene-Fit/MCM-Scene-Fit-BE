@@ -430,7 +430,10 @@ async function conceptViaOpenAI(conditions: Conditions): Promise<SceneConcept | 
         max_tokens: 200,
       }),
     })
-    if (!res.ok) return null
+    if (!res.ok) {
+      aiWarn('conceptViaOpenAI', `HTTP ${res.status}`)
+      return null
+    }
     const data = (await res.json()) as { choices?: { message?: { content?: string } }[] }
     const content = data.choices?.[0]?.message?.content
     if (!content) return null
@@ -464,7 +467,10 @@ async function pickScenePlace(conditions: Conditions): Promise<{ place: string; 
         max_tokens: 200,
       }),
     })
-    if (!res.ok) return null
+    if (!res.ok) {
+      aiWarn('pickScenePlace', `HTTP ${res.status} ${(await res.text()).slice(0, 160)}`)
+      return null
+    }
     const data = (await res.json()) as { choices?: { message?: { content?: string } }[] }
     const content = data.choices?.[0]?.message?.content
     if (!content) return null
@@ -485,12 +491,31 @@ async function pickScenePlace(conditions: Conditions): Promise<{ place: string; 
  * 두 단계다. 1) 목적지 도시 안에서 조건에 맞는 실제 동네를 고른다.
  * 2) 그 동네를 배경으로 그린다. 사전 생성이 아니라 요청 시점에 만든다.
  */
+/**
+ * 장소를 고르는 텍스트 모델이 막혀도 배경은 나와야 한다.
+ * 목적지만으로 만든 무난한 장면으로 물러난다 — 배경이 아예 없는 것보다 낫다.
+ */
+function fallbackScenePlace(conditions: Conditions) {
+  const destination = conditions.destination.trim()
+  if (!destination) return null
+  return {
+    place: destination,
+    imagePrompt: `a quiet everyday street in ${destination}, no people, no bags, no text or logos, candid documentary street photography, shot on a 35mm lens, natural exposure, realistic film grain`,
+  }
+}
+
 export async function sceneBackground(conditions: Conditions): Promise<SceneBackground | null> {
   const apiKey = process.env.OPENAI_API_KEY
-  if (!apiKey) return null
+  if (!apiKey) {
+    aiWarn('sceneBackground', 'OPENAI_API_KEY 없음')
+    return null
+  }
 
-  const picked = await pickScenePlace(conditions)
-  if (!picked) return null
+  const picked = (await pickScenePlace(conditions)) ?? fallbackScenePlace(conditions)
+  if (!picked) {
+    aiWarn('sceneBackground', '목적지가 없어 장소를 정할 수 없음')
+    return null
+  }
 
   try {
     const res = await fetch('https://api.openai.com/v1/images/generations', {
@@ -504,7 +529,10 @@ export async function sceneBackground(conditions: Conditions): Promise<SceneBack
         n: 1,
       }),
     })
-    if (!res.ok) return null
+    if (!res.ok) {
+      aiWarn('sceneBackground', `HTTP ${res.status} ${(await res.text()).slice(0, 160)}`)
+      return null
+    }
     const data = (await res.json()) as { data?: { b64_json?: string }[] }
     const b64 = data.data?.[0]?.b64_json
     if (!b64) return null
