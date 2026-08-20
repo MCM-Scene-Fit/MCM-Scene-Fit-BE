@@ -1,6 +1,17 @@
 import { GoogleGenAI } from '@google/genai'
 import { EXPERIENCE_LABEL, ITEM_LABEL, MOBILITY_LABEL, SCENE_LABEL, WEAR_LABEL } from './data/labels.js'
-import { ITEMS, MOBILITY, SCENES, type Conditions, type FitResult, type ItemId, type Mobility, type Product, type Scene } from './types.js'
+import {
+  ITEMS,
+  MOBILITY,
+  SCENES,
+  type Conditions,
+  type FitResult,
+  type ItemId,
+  type Mobility,
+  type Product,
+  type Scene,
+  type WearStyle,
+} from './types.js'
 
 export type Explanation = {
   matches: string[]
@@ -10,6 +21,15 @@ export type Explanation = {
 }
 
 const MODEL = 'gemini-3.6-flash'
+
+/**
+ * AI 호출은 실패해도 규칙 엔진 문장으로 되돌아가므로 화면은 뜬다.
+ * 다만 조용히 삼키면 배포 환경에서 원인을 못 찾으니, 어디서 왜 실패했는지는 남긴다.
+ */
+function aiWarn(where: string, error: unknown) {
+  const message = error instanceof Error ? error.message : String(error)
+  console.warn(`[ai] ${where} 실패 — 폴백 사용: ${message}`)
+}
 
 /**
  * 판정을 바꾸지 않는다. 규칙 엔진이 낸 결과를 사람이 읽기 좋은 문장으로만 다듬는다.
@@ -48,8 +68,9 @@ export async function explain(
       storeChecks: parsed.storeChecks ?? fallback.storeChecks,
       storeQuestions: parsed.storeQuestions ?? fallback.storeQuestions,
     }
-  } catch {
+  } catch (error) {
     // AI가 실패해도 결과 화면은 떠야 한다. 규칙 엔진 문장으로 되돌린다.
+    aiWarn('explain', error)
     return fallback
   }
 }
@@ -156,7 +177,8 @@ export async function parseConditions(text: string): Promise<ParsedConditions> {
     if (!response.text) return EMPTY_PARSE
     const parsed = JSON.parse(response.text) as ParsedConditions
     return sanitizeParsed(parsed)
-  } catch {
+  } catch (error) {
+    aiWarn('parseConditionsWithAI', error)
     return { ...EMPTY_PARSE, unparsed: ['문장을 분석하는 중 오류가 발생했습니다.'] }
   }
 }
@@ -235,7 +257,8 @@ export async function weatherReference(destination: string, period: string): Pro
     if (!parsed.summary) return fallback
     // usableForMaterialJudgement는 모델 응답과 무관하게 항상 false로 고정한다.
     return { summary: parsed.summary, usableForMaterialJudgement: false }
-  } catch {
+  } catch (error) {
+    aiWarn('photoSummary', error)
     return fallback
   }
 }
@@ -268,9 +291,25 @@ export type SceneConcept = {
  */
 export async function sceneConcept(conditions: Conditions): Promise<SceneConcept> {
   const fallback = fallbackConcept(conditions)
-  const apiKey = process.env.GEMINI_API_KEY
-  if (!apiKey || !conditions.scene) return fallback
+  if (!conditions.scene) {
+    aiWarn('sceneConcept', 'scene 값 없음')
+    return fallback
+  }
+  const gemini = await conceptViaGemini(conditions)
+  if (gemini) return gemini
+  // Gemini 무료 티어는 하루 호출 수가 적어 시연 중에 쉽게 소진된다.
+  // 조건 나열 문장으로 바로 물러나지 말고, 장소 선정에도 쓰는 OpenAI 통합 호출로 한 번 더 시도한다.
+  const brief = await sceneBriefViaOpenAI(conditions)
+  return brief ? { concept: brief.concept, description: brief.description } : fallback
+}
 
+/** Gemini로만 시도한다. 실패하면 null — 호출한 쪽이 다음 수단을 고른다. */
+async function conceptViaGemini(conditions: Conditions): Promise<SceneConcept | null> {
+  const apiKey = process.env.GEMINI_API_KEY
+  if (!apiKey) {
+    aiWarn('sceneConcept', 'GEMINI_API_KEY 없음')
+    return null
+  }
   try {
     const ai = new GoogleGenAI({ apiKey })
     const response = await ai.models.generateContent({
@@ -282,15 +321,16 @@ export async function sceneConcept(conditions: Conditions): Promise<SceneConcept
         responseJsonSchema: CONCEPT_SCHEMA,
       },
     })
-    if (!response.text) return fallback
+    if (!response.text) return null
     const parsed = JSON.parse(response.text) as SceneConcept
-    if (!parsed.concept || !parsed.description) return fallback
+    if (!parsed.concept || !parsed.description) return null
     return {
       concept: parsed.concept.slice(0, 40),
       description: parsed.description.slice(0, 80),
     }
-  } catch {
-    return fallback
+  } catch (error) {
+    aiWarn('sceneConcept', error)
+    return null
   }
 }
 
@@ -343,3 +383,245 @@ function fallbackConcept(conditions: Conditions): SceneConcept {
 }
 
 export { EXPERIENCE_LABEL }
+
+export type SceneBackground = SceneConcept & { base64: string; mimeType: string; place: string }
+
+const CHAT_MODEL = 'gpt-4o-mini'
+const IMAGE_MODEL = 'gpt-image-1-mini'
+
+/**
+ * 장소 선정과 장면 컨셉은 원래 따로 OpenAI를 불렀다. 조건을 보고 장면을 이해한다는
+ * 점에서 하는 일이 겹쳐서, Gemini가 막혔을 때는 이 프롬프트 하나로 네 값을 한 번에 받는다.
+ * (Gemini가 살아있을 때는 concept는 그쪽에서 오고, 이 호출은 place만 쓰인다.)
+ */
+const SCENE_BRIEF_SYSTEM = `너는 MCM SCENE FIT의 장면 담당이다. 사용자가 고른 조건을 보고 두 가지를 만든다.
+
+concept: 영문 2~4단어. 도시나 장소가 있으면 앞에 둔다. 예: Tokyo Archive Walker, Weekend City Commuter
+  브랜드명이나 제품명은 넣지 마라.
+
+description: 한국어 한 문장. 그 장면 속 사람이 어떤 하루를 보내는지 묘사한다.
+  존댓말을 쓰지 말고 명사형으로 끝낸다. 예: 많이 걸으며 전시와 오래된 공간을 기록하는 여행자
+
+place·imagePrompt: 목적지 도시 안에서 조건에 맞는 실제 장소 하나를 고른다.
+
+지켜야 할 것:
+- concept·description은 입력에 없는 사실(날씨, 동행, 예산 등)을 지어내지 마라.
+  가방이나 제품을 언급하지 마라. 아직 고르지 않았을 수 있다.
+- "동네" 수준으로 뭉뚱그리지 마라. place는 그 동네 안에 실제로 있는 구체적인 지명이어야
+  한다 — 성당·광장·시장·다리·계단·골목처럼 실제로 존재하고 이름이 붙어 있는 곳.
+  입력에 등장하는 도시가 무엇이든, 그 도시 안에서 매번 새로 떠올려라 — 예시를 외워
+  그대로 베끼지 마라.
+- 목적지 도시 안에 실제로 있는 곳이어야 한다. 존재하지 않는 곳을 지어내지 마라.
+  구체적인 이름이 확실하지 않으면 존재가 확실한 더 넓은 지명으로 물러나도 된다 — 없는
+  이름을 지어내는 것보다 낫다.
+- 조건에 어울린다면 그 도시임을 한눈에 알아볼 수 있는 곳을 우선한다.
+  유명 랜드마크는 배경 스카이라인이나 먼 풍경으로는 넣어도 된다.
+  다만 그 건물 하나만 화면 가득 클로즈업하지는 않는다 — 초저해상도로 그리면 부정확하게
+  나올 수 있고, 상표성 구조물을 잘못 재현하는 위험도 있다.
+- 목적지가 비어 있으면 place를 빈 문자열로, imagePrompt도 빈 문자열로 답한다.
+
+imagePrompt: 영어 한 문장. 그 동네의 실제 분위기를 묘사한다. 사람 없음, 가방 없음, 글자·로고 없음을 반드시 명시하고,
+그림·일러스트가 아니라 실제 촬영한 사진처럼 보이도록 "candid documentary street photography, shot on a 35mm lens, natural exposure, realistic film grain" 같은 사진 촬영 표현을 반드시 포함한다.
+
+JSON으로만 답한다: {"concept": "...", "description": "...", "place": "한국어 장소명", "imagePrompt": "english prompt"}`
+
+type SceneBrief = SceneConcept & { place: string; imagePrompt: string }
+
+/**
+ * 장소(place·imagePrompt)와, Gemini가 막혔을 때 쓸 컨셉(concept·description)을
+ * 한 번의 OpenAI 호출로 같이 받는다. 예전에는 이 둘을 따로 불러 호출 수가 두 배였다.
+ */
+async function sceneBriefViaOpenAI(conditions: Conditions): Promise<SceneBrief | null> {
+  const apiKey = process.env.OPENAI_API_KEY
+  if (!apiKey || !conditions.destination.trim()) return null
+
+  try {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: CHAT_MODEL,
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: SCENE_BRIEF_SYSTEM },
+          { role: 'user', content: JSON.stringify(conditionBrief(conditions)) },
+        ],
+        max_tokens: 300,
+      }),
+    })
+    if (!res.ok) {
+      aiWarn('sceneBriefViaOpenAI', `HTTP ${res.status} ${(await res.text()).slice(0, 160)}`)
+      return null
+    }
+    const data = (await res.json()) as { choices?: { message?: { content?: string } }[] }
+    const content = data.choices?.[0]?.message?.content
+    if (!content) return null
+    const parsed = JSON.parse(content) as Partial<SceneBrief>
+    if (!parsed.place || !parsed.imagePrompt || !parsed.concept || !parsed.description) return null
+    return {
+      concept: parsed.concept.slice(0, 40),
+      description: parsed.description.slice(0, 80),
+      place: parsed.place,
+      imagePrompt: parsed.imagePrompt,
+    }
+  } catch (error) {
+    aiWarn('sceneBriefViaOpenAI', error)
+    return null
+  }
+}
+
+/**
+ * 장면 배경만 실시간으로 생성한다. 가방은 절대 이 함수를 거치지 않는다 — AI로 다시 그리면
+ * 다른 제품이 되어버려서(재질·로고·형태가 바뀜) 브랜드 자산 보호 원칙에 어긋난다.
+ * 사람·가방은 프론트에서 실제 이미지를 그대로 합성한다.
+ *
+ * 두 단계다. 1) 목적지 도시 안에서 조건에 맞는 실제 동네를 고른다.
+ * 2) 그 동네를 배경으로 그린다. 사전 생성이 아니라 요청 시점에 만든다.
+ */
+/**
+ * 장소를 고르는 텍스트 모델이 막혀도 배경은 나와야 한다.
+ * 목적지만으로 만든 무난한 장면으로 물러난다 — 배경이 아예 없는 것보다 낫다.
+ */
+function fallbackScenePlace(conditions: Conditions) {
+  const destination = conditions.destination.trim()
+  if (!destination) return null
+  return {
+    place: destination,
+    imagePrompt: `a quiet everyday street in ${destination}, no people, no bags, no text or logos, candid documentary street photography, shot on a 35mm lens, natural exposure, realistic film grain`,
+  }
+}
+
+/**
+ * 배경 화면에는 컨셉 문구도 같이 뜬다. 예전에는 이걸 FE가 /ai/scene-concept로 따로
+ * 불러왔는데, 장소를 고르는 OpenAI 호출이 이미 컨셉도 만들 수 있어서 여기서 같이 받는다.
+ * Gemini는 무료라 되도록 그쪽 결과를 쓰고, 안 되면 이 OpenAI 결과로 대신한다.
+ * 두 호출은 동시에 보낸다 — 순서대로 기다리면 안 그래도 느린 배경 생성이 더 늦어진다.
+ */
+async function sceneBriefFor(conditions: Conditions) {
+  const [gemini, openai] = await Promise.all([conceptViaGemini(conditions), sceneBriefViaOpenAI(conditions)])
+  const place = openai ?? fallbackScenePlace(conditions)
+  const concept = gemini ?? (openai ? { concept: openai.concept, description: openai.description } : null)
+  return { place, concept }
+}
+
+export async function sceneBackground(conditions: Conditions): Promise<SceneBackground | null> {
+  const apiKey = process.env.OPENAI_API_KEY
+  if (!apiKey) {
+    aiWarn('sceneBackground', 'OPENAI_API_KEY 없음')
+    return null
+  }
+
+  const { place: picked, concept } = await sceneBriefFor(conditions)
+  if (!picked) {
+    aiWarn('sceneBackground', '목적지가 없어 장소를 정할 수 없음')
+    return null
+  }
+  const { concept: conceptText, description } = concept ?? fallbackConcept(conditions)
+
+  try {
+    const res = await fetch('https://api.openai.com/v1/images/generations', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: IMAGE_MODEL,
+        prompt: `${picked.imagePrompt}, empty walkway in the foreground for a person to stand on`,
+        size: '1024x1536',
+        quality: 'low',
+        n: 1,
+      }),
+    })
+    if (!res.ok) {
+      aiWarn('sceneBackground', `HTTP ${res.status} ${(await res.text()).slice(0, 160)}`)
+      return null
+    }
+    const data = (await res.json()) as { data?: { b64_json?: string }[] }
+    const b64 = data.data?.[0]?.b64_json
+    if (!b64) return null
+    return { base64: b64, mimeType: 'image/png', place: picked.place, concept: conceptText, description }
+  } catch (error) {
+    aiWarn('sceneBackground', error)
+    return null
+  }
+}
+
+export type ScenePortraitBody = {
+  heightCm: number
+  build: 'slim' | 'standard' | 'broad'
+  sex: 'female' | 'male'
+}
+
+export type ScenePortrait = SceneBackground
+
+const BUILD_TEXT: Record<ScenePortraitBody['build'], string> = {
+  slim: 'slender build',
+  standard: 'average build',
+  broad: 'broad-shouldered build',
+}
+
+const SEX_TEXT: Record<ScenePortraitBody['sex'], string> = {
+  female: 'a woman',
+  male: 'a man',
+}
+
+/** 착용 방식별로, 아직 가방이 없는 빈 끈만 그리게 한다. 가방은 프론트에서 원본 이미지를 합성한다. */
+function strapPromptFor(wear: WearStyle | null) {
+  if (wear === 'backpack') {
+    return 'wearing two empty plain black backpack straps over both shoulders, nothing hanging behind them, hands empty'
+  }
+  if (wear === 'tote' || wear === null) {
+    return 'one hand relaxed at their side as if about to hold a bag handle, no bag, no strap'
+  }
+  // shoulder, crossbody
+  return 'a plain black webbing strap running diagonally across the torso from one shoulder toward the opposite hip, but the strap simply ends there with nothing attached — no bag'
+}
+
+function heightBucketText(heightCm: number) {
+  if (heightCm < 155) return 'around 150cm tall'
+  if (heightCm < 165) return 'around 160cm tall'
+  if (heightCm < 175) return 'around 170cm tall'
+  if (heightCm < 185) return 'around 180cm tall'
+  return 'around 190cm tall'
+}
+
+/**
+ * 사용자 사진 없이도 "착용한 모습"을 보여주기 위해, 키·체형·성별에 맞는 사람을 장면 배경과
+ * 함께 통째로 그린다. 가방은 이 함수를 거치지 않는다 — 프론트가 원본 가방 이미지를
+ * 이 인물 위에 합성하고, 어깨끈 자리는 이미 그림에 있으니 겹쳐 보이지 않는다.
+ *
+ * sceneBackground와 달리 사람이 있어야 해서, 생성된 이미지를 실제 업로드 사진과 동일하게
+ * 자세 인식(analyzeBody) 파이프라인에 태운다 — 이 함수는 이미지만 만들고 좌표는 몰라도 된다.
+ */
+export async function scenePortrait(
+  conditions: Conditions,
+  body: ScenePortraitBody,
+): Promise<ScenePortrait | null> {
+  const apiKey = process.env.OPENAI_API_KEY
+  if (!apiKey) return null
+
+  const { place: picked, concept } = await sceneBriefFor(conditions)
+  const placeLine = picked ? picked.imagePrompt : 'a plain quiet city street, natural daylight'
+  const place = picked?.place ?? ''
+  const { concept: conceptText, description } = concept ?? fallbackConcept(conditions)
+
+  const prompt = [
+    `Full-body photograph of ${SEX_TEXT[body.sex]} with a ${BUILD_TEXT[body.build]}, ${heightBucketText(body.heightCm)}, standing on a ${placeLine}`,
+    strapPromptFor(conditions.wearStyle),
+    'seen from head to toe, facing slightly to the side, candid documentary street photography, shot on a 35mm lens, natural exposure, realistic film grain, no text, no logos, plain simple outfit',
+  ].join(', ')
+
+  try {
+    const res = await fetch('https://api.openai.com/v1/images/generations', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: IMAGE_MODEL, prompt, size: '1024x1536', quality: 'low', n: 1 }),
+    })
+    if (!res.ok) return null
+    const data = (await res.json()) as { data?: { b64_json?: string }[] }
+    const b64 = data.data?.[0]?.b64_json
+    if (!b64) return null
+    return { base64: b64, mimeType: 'image/png', place, concept: conceptText, description }
+  } catch (error) {
+    aiWarn('scenePortrait', error)
+    return null
+  }
+}
