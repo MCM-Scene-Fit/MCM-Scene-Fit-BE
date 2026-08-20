@@ -23,6 +23,15 @@ export type Explanation = {
 const MODEL = 'gemini-3.6-flash'
 
 /**
+ * AI 호출은 실패해도 규칙 엔진 문장으로 되돌아가므로 화면은 뜬다.
+ * 다만 조용히 삼키면 배포 환경에서 원인을 못 찾으니, 어디서 왜 실패했는지는 남긴다.
+ */
+function aiWarn(where: string, error: unknown) {
+  const message = error instanceof Error ? error.message : String(error)
+  console.warn(`[ai] ${where} 실패 — 폴백 사용: ${message}`)
+}
+
+/**
  * 판정을 바꾸지 않는다. 규칙 엔진이 낸 결과를 사람이 읽기 좋은 문장으로만 다듬는다.
  * API 키가 없으면 규칙 엔진 문장을 그대로 돌려준다. 서비스는 키 없이도 동작한다.
  */
@@ -59,8 +68,9 @@ export async function explain(
       storeChecks: parsed.storeChecks ?? fallback.storeChecks,
       storeQuestions: parsed.storeQuestions ?? fallback.storeQuestions,
     }
-  } catch {
+  } catch (error) {
     // AI가 실패해도 결과 화면은 떠야 한다. 규칙 엔진 문장으로 되돌린다.
+    aiWarn('explain', error)
     return fallback
   }
 }
@@ -167,7 +177,8 @@ export async function parseConditions(text: string): Promise<ParsedConditions> {
     if (!response.text) return EMPTY_PARSE
     const parsed = JSON.parse(response.text) as ParsedConditions
     return sanitizeParsed(parsed)
-  } catch {
+  } catch (error) {
+    aiWarn('parseConditionsWithAI', error)
     return { ...EMPTY_PARSE, unparsed: ['문장을 분석하는 중 오류가 발생했습니다.'] }
   }
 }
@@ -246,7 +257,8 @@ export async function weatherReference(destination: string, period: string): Pro
     if (!parsed.summary) return fallback
     // usableForMaterialJudgement는 모델 응답과 무관하게 항상 false로 고정한다.
     return { summary: parsed.summary, usableForMaterialJudgement: false }
-  } catch {
+  } catch (error) {
+    aiWarn('photoSummary', error)
     return fallback
   }
 }
@@ -280,7 +292,14 @@ export type SceneConcept = {
 export async function sceneConcept(conditions: Conditions): Promise<SceneConcept> {
   const fallback = fallbackConcept(conditions)
   const apiKey = process.env.GEMINI_API_KEY
-  if (!apiKey || !conditions.scene) return fallback
+  if (!conditions.scene) {
+    aiWarn('sceneConcept', 'scene 값 없음')
+    return fallback
+  }
+  if (!apiKey) {
+    aiWarn('sceneConcept', 'GEMINI_API_KEY 없음')
+    return (await conceptViaOpenAI(conditions)) ?? fallback
+  }
 
   try {
     const ai = new GoogleGenAI({ apiKey })
@@ -293,15 +312,20 @@ export async function sceneConcept(conditions: Conditions): Promise<SceneConcept
         responseJsonSchema: CONCEPT_SCHEMA,
       },
     })
-    if (!response.text) return fallback
+    if (!response.text) return (await conceptViaOpenAI(conditions)) ?? fallback
     const parsed = JSON.parse(response.text) as SceneConcept
-    if (!parsed.concept || !parsed.description) return fallback
+    if (!parsed.concept || !parsed.description) {
+      return (await conceptViaOpenAI(conditions)) ?? fallback
+    }
     return {
       concept: parsed.concept.slice(0, 40),
       description: parsed.description.slice(0, 80),
     }
-  } catch {
-    return fallback
+  } catch (error) {
+    // Gemini 무료 티어는 하루 호출 수가 적어 시연 중에 쉽게 소진된다.
+    // 조건 나열 문장으로 바로 물러나지 말고, 이미 쓰고 있는 OpenAI로 한 번 더 시도한다.
+    aiWarn('sceneConcept', error)
+    return (await conceptViaOpenAI(conditions)) ?? fallback
   }
 }
 
@@ -381,6 +405,47 @@ imagePrompt: 영어 한 문장. 그 동네의 실제 분위기를 묘사한다. 
 
 JSON으로만 답한다: {"place": "한국어 장소명", "imagePrompt": "english prompt"}`
 
+/**
+ * Gemini가 막혔을 때 쓰는 두 번째 시도. 같은 지시문을 OpenAI에 그대로 넘긴다.
+ * 여기까지 실패하면 그때 규칙 엔진 문장으로 물러난다.
+ */
+async function conceptViaOpenAI(conditions: Conditions): Promise<SceneConcept | null> {
+  const apiKey = process.env.OPENAI_API_KEY
+  if (!apiKey) return null
+
+  try {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: CHAT_MODEL,
+        response_format: { type: 'json_object' },
+        messages: [
+          {
+            role: 'system',
+            content: `${CONCEPT_SYSTEM}\n\nJSON으로만 답한다: {"concept": "...", "description": "..."}`,
+          },
+          { role: 'user', content: JSON.stringify(conditionBrief(conditions)) },
+        ],
+        max_tokens: 200,
+      }),
+    })
+    if (!res.ok) return null
+    const data = (await res.json()) as { choices?: { message?: { content?: string } }[] }
+    const content = data.choices?.[0]?.message?.content
+    if (!content) return null
+    const parsed = JSON.parse(content) as SceneConcept
+    if (!parsed.concept || !parsed.description) return null
+    return {
+      concept: parsed.concept.slice(0, 40),
+      description: parsed.description.slice(0, 80),
+    }
+  } catch (error) {
+    aiWarn('conceptViaOpenAI', error)
+    return null
+  }
+}
+
 async function pickScenePlace(conditions: Conditions): Promise<{ place: string; imagePrompt: string } | null> {
   const apiKey = process.env.OPENAI_API_KEY
   if (!apiKey || !conditions.destination.trim()) return null
@@ -406,7 +471,8 @@ async function pickScenePlace(conditions: Conditions): Promise<{ place: string; 
     const parsed = JSON.parse(content) as { place?: string; imagePrompt?: string }
     if (!parsed.place || !parsed.imagePrompt) return null
     return { place: parsed.place, imagePrompt: parsed.imagePrompt }
-  } catch {
+  } catch (error) {
+    aiWarn('pickScenePlace', error)
     return null
   }
 }
@@ -443,7 +509,8 @@ export async function sceneBackground(conditions: Conditions): Promise<SceneBack
     const b64 = data.data?.[0]?.b64_json
     if (!b64) return null
     return { base64: b64, mimeType: 'image/png', place: picked.place }
-  } catch {
+  } catch (error) {
+    aiWarn('sceneBackground', error)
     return null
   }
 }
@@ -523,7 +590,8 @@ export async function scenePortrait(
     const b64 = data.data?.[0]?.b64_json
     if (!b64) return null
     return { base64: b64, mimeType: 'image/png', place }
-  } catch {
+  } catch (error) {
+    aiWarn('scenePortrait', error)
     return null
   }
 }
